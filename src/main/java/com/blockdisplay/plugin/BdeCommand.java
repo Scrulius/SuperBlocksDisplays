@@ -211,12 +211,18 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         boolean loop = true;
 
         int targetIndex = 2;
-        if (isPlay && args.length >= 3) {
-            String mode = args[2].toLowerCase();
-            if (mode.equals("once") || mode.equals("loop")) {
-                loop = mode.equals("loop");
-                targetIndex = 3;
+        if (isPlay) {
+            if (args.length < 3) {
+                player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde anim play <loop|once> [group_id]");
+                return;
             }
+            String mode = args[2].toLowerCase();
+            if (!mode.equals("loop") && !mode.equals("once")) {
+                player.sendMessage(PREFIX + ChatColor.RED + "You must specify 'loop' or 'once' for the animation mode.");
+                return;
+            }
+            loop = mode.equals("loop");
+            targetIndex = 3;
         }
 
         ModelGroup target = (args.length >= targetIndex + 1) ? findGroupByPartialId(args[targetIndex]) : getNearestGroup(player);
@@ -242,7 +248,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             plugin.getPersistenceManager().saveGroup(target);
             player.sendMessage(PREFIX + ChatColor.YELLOW + "Animation stopped ⏸");
         } else {
-            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde anim <play|stop> [loop|once] [group_id]");
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde anim <play|stop> ...");
         }
     }
 
@@ -335,7 +341,8 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + " /bde remove [group]" + ChatColor.GRAY + " - Remove model");
         player.sendMessage(ChatColor.YELLOW + " /bde list" + ChatColor.GRAY + " - List all active models");
         player.sendMessage(ChatColor.YELLOW + " /bde rotate <yaw> [group]" + ChatColor.GRAY + " - Rotate a model");
-        player.sendMessage(ChatColor.YELLOW + " /bde anim <play|stop> [loop|once] [group]" + ChatColor.GRAY + " - Toggle animation");
+        player.sendMessage(ChatColor.YELLOW + " /bde anim play <loop|once> [group]" + ChatColor.GRAY + " - Play animation");
+        player.sendMessage(ChatColor.YELLOW + " /bde anim stop [group]" + ChatColor.GRAY + " - Stop animation");
         player.sendMessage(ChatColor.YELLOW + " /bde speed <0.25-4.0> [group]" + ChatColor.GRAY + " - Set anim speed");
         player.sendMessage(ChatColor.YELLOW + " /bde info [group]" + ChatColor.GRAY + " - Show model details");
         player.sendMessage(ChatColor.YELLOW + " /bde clearcache" + ChatColor.GRAY + " - Clear model cache");
@@ -374,20 +381,25 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                 }
             }
             case "anim" -> {
-                if (args.length == 2) return filterStartsWith(Arrays.asList("play", "stop"), args[1]);
-                if (args.length == 3 && args[1].equalsIgnoreCase("play")) {
-                    List<String> options = new ArrayList<>(Arrays.asList("loop", "once"));
-                    options.addAll(getGroupIdSuggestions());
-                    options.add("nearest");
-                    return filterStartsWith(options, args[2]);
+                if (args.length == 2) {
+                    return filterStartsWith(Arrays.asList("play", "stop"), args[1]);
                 }
-                if (args.length >= 3) {
-                    int targetIdx = (args[1].equalsIgnoreCase("play") && (args[2].equalsIgnoreCase("loop") || args[2].equalsIgnoreCase("once"))) ? 3 : 2;
-                    if (args.length == targetIdx + 1) {
+                if (args.length == 3) {
+                    if (args[1].equalsIgnoreCase("play")) {
+                        return filterStartsWith(Arrays.asList("loop", "once"), args[2]);
+                    } else if (args[1].equalsIgnoreCase("stop")) {
                         List<String> options = new ArrayList<>();
                         options.add("nearest");
                         options.addAll(getGroupIdSuggestions());
-                        return filterStartsWith(options, args[targetIdx]);
+                        return filterStartsWith(options, args[2]);
+                    }
+                }
+                if (args.length == 4) {
+                    if (args[1].equalsIgnoreCase("play")) {
+                        List<String> options = new ArrayList<>();
+                        options.add("nearest");
+                        options.addAll(getGroupIdSuggestions());
+                        return filterStartsWith(options, args[3]);
                     }
                 }
             }
