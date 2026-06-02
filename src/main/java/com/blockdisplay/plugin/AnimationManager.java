@@ -1,8 +1,6 @@
 package com.blockdisplay.plugin;
 
 import org.bukkit.Bukkit;
-import org.bukkit.GameRule;
-import org.bukkit.World;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.List;
@@ -49,15 +47,13 @@ public class AnimationManager extends BukkitRunnable {
             UUID gid = group.getGroupId();
             float speed = group.getAnimSpeed();
 
-            // Accumulator-based speed control
-            // Speed 1.0 = 1 frame per tick (normal)
-            // Speed 2.0 = 2 frames per tick (fast)
-            // Speed 0.5 = 1 frame every 2 ticks (slow)
-            float acc = accumulators.getOrDefault(gid, 0f) + speed;
-            int framesToAdvance = (int) acc;
-            accumulators.put(gid, acc - framesToAdvance);
-
             int tick = tickCounters.getOrDefault(gid, 0);
+            float accum = accumulators.getOrDefault(gid, 0.0f);
+            accum += speed;
+
+            int framesToAdvance = (int) accum;
+            accum -= framesToAdvance;
+            accumulators.put(gid, accum);
 
             for (int i = 0; i < framesToAdvance; i++) {
                 int currentAnimTick = tick % (maxTick + 1);
@@ -74,30 +70,18 @@ public class AnimationManager extends BukkitRunnable {
                 List<String> commands = anim.get(String.valueOf(currentAnimTick));
 
                 if (commands != null) {
-                    World world = group.getOrigin().getWorld();
-                    if (world != null) {
-                        String dimension = world.getKey().toString();
-                        double x = group.getOrigin().getX();
-                        double y = group.getOrigin().getY();
-                        double z = group.getOrigin().getZ();
+                    String dimension = group.getOrigin().getWorld().getKey().toString();
+                    double x = group.getOrigin().getX();
+                    double y = group.getOrigin().getY();
+                    double z = group.getOrigin().getZ();
 
-                        Boolean originalFeedback = world.getGameRuleValue(GameRule.SEND_COMMAND_FEEDBACK);
-                        if (Boolean.TRUE.equals(originalFeedback)) {
-                            world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, false);
-                        }
-
-                        for (String cmd : commands) {
-                            String fullCommand = String.format(Locale.US,
-                                    "execute in %s positioned %f %f %f run %s",
-                                    dimension, x, y, z, cmd);
-                            try {
-                                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), fullCommand);
-                            } catch (Exception ignored) {}
-                        }
-
-                        if (Boolean.TRUE.equals(originalFeedback)) {
-                            world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, true);
-                        }
+                    for (String cmd : commands) {
+                        String fullCommand = String.format(Locale.US,
+                                "execute in %s positioned %f %f %f run %s",
+                                dimension, x, y, z, cmd);
+                        try {
+                            Bukkit.dispatchCommand(SilentCommandSender.getInstance(), fullCommand);
+                        } catch (Exception ignored) {}
                     }
                 }
                 tick++;
