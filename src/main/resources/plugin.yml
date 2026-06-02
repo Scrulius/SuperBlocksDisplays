@@ -1,0 +1,17 @@
+name: SuperBlocksDisplays
+version: '1.0.0'
+main: com.blockdisplay.plugin.BlockDisplayPlugin
+api-version: '1.21'
+author: Melonzio
+description: Spawn, animate, and manage BlockDisplay models from block-display.com
+website: https://github.com/Melonzio/SuperBlocksDisplays
+commands:
+  bde:
+    description: Manage Block Display models
+    usage: /bde <spawn|remove|list|rotate|anim|speed|info|clearcache|help>
+    permission: superblocksdisp.use
+    aliases: [sbd, blockdisplay]
+permissions:
+  superblocksdisp.use:
+    description: Allows using SuperBlocksDisplays commands
+    default: op

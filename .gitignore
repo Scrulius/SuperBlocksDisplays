@@ -1,0 +1,19 @@
+# Maven
+target/
+*.jar
+!src/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Plugin data
+api_sample*.json
