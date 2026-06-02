@@ -83,14 +83,14 @@ public class ModelGroup {
                     entityType = idMatcher.group(1);
                 }
 
-                String nbt = snbt.replaceFirst("\\{id:\"minecraft:[^\"]+\",", "{");
+                UUID partUuid = UUID.randomUUID();
+                long msb = partUuid.getMostSignificantBits();
+                long lsb = partUuid.getLeastSignificantBits();
+                String uuidSnbt = String.format(Locale.US, "UUID:[I;%d,%d,%d,%d]",
+                        (int) (msb >> 32), (int) msb, (int) (lsb >> 32), (int) lsb);
 
-                Matcher tagsMatcher = Pattern.compile("Tags:\\s*\\[").matcher(nbt);
-                if (tagsMatcher.find()) {
-                    nbt = tagsMatcher.replaceFirst("Tags:[\"" + uniqueTag + "\",");
-                } else {
-                    nbt = nbt.substring(0, nbt.length() - 1) + ",Tags:[\"" + uniqueTag + "\"]}";
-                }
+                String nbt = snbt.replaceFirst("\\{id:\"minecraft:[^\"]+\",?", "{");
+                nbt = nbt.replaceFirst("\\{", "{" + uuidSnbt + ",");
 
                 String cmd = String.format(Locale.US,
                         "execute in %s positioned %f %f %f run summon minecraft:%s ~ ~ ~ %s",
@@ -98,6 +98,13 @@ public class ModelGroup {
 
                 try {
                     Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
+                    Entity spawnedPart = plugin.getServer().getEntity(partUuid);
+                    if (spawnedPart != null) {
+                        spawnedPart.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
+                        parts.add(spawnedPart);
+                    } else {
+                        plugin.getLogger().warning("Spawned part not found via UUID: " + partUuid);
+                    }
                 } catch (Exception e) {
                     plugin.getLogger().warning("Failed to summon part: " + e.getMessage());
                 }
@@ -106,11 +113,27 @@ public class ModelGroup {
 
         if (modelData.hasHitbox()) {
             for (String hitboxCmd : modelData.content.hitbox) {
+                UUID hitboxUuid = UUID.randomUUID();
+                long msb = hitboxUuid.getMostSignificantBits();
+                long lsb = hitboxUuid.getLeastSignificantBits();
+                String uuidSnbt = String.format(Locale.US, "UUID:[I;%d,%d,%d,%d]",
+                        (int) (msb >> 32), (int) msb, (int) (lsb >> 32), (int) lsb);
+
+                if (!hitboxCmd.contains("{")) {
+                    hitboxCmd += "{}";
+                }
+                String modifiedCmd = hitboxCmd.replaceFirst("\\{", "{" + uuidSnbt + ",");
+
                 String cmd = String.format(Locale.US,
                         "execute in %s positioned %f %f %f run %s",
-                        dimension, origin.getX(), origin.getY(), origin.getZ(), hitboxCmd);
+                        dimension, origin.getX(), origin.getY(), origin.getZ(), modifiedCmd);
                 try {
                     Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
+                    Entity spawnedHitbox = plugin.getServer().getEntity(hitboxUuid);
+                    if (spawnedHitbox != null) {
+                        spawnedHitbox.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
+                        parts.add(spawnedHitbox);
+                    }
                 } catch (Exception e) {
                     plugin.getLogger().warning("Failed to summon hitbox: " + e.getMessage());
                 }
@@ -120,18 +143,7 @@ public class ModelGroup {
         if (Boolean.TRUE.equals(originalFeedback)) world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, true);
         if (Boolean.TRUE.equals(originalLog)) world.setGameRule(GameRule.LOG_ADMIN_COMMANDS, true);
 
-        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-            for (Entity e : world.getEntitiesByClass(org.bukkit.entity.Display.class)) {
-                if (e.getLocation().distanceSquared(origin) <= 400) {
-                    if (e.getScoreboardTags().contains(uniqueTag)) {
-                        e.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
-                        e.removeScoreboardTag(uniqueTag);
-                        parts.add(e);
-                    }
-                }
-            }
-            plugin.getLogger().info("Model " + modelId + " spawned with " + parts.size() + " parts (group " + groupId.toString().substring(0, 8) + ")");
-        }, 5L);
+        plugin.getLogger().info("Model " + modelId + " spawned with " + parts.size() + " parts (group " + groupId.toString().substring(0, 8) + ")");
     }
 
     public void remove() {
