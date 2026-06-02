@@ -1,58 +1,58 @@
 # SuperBlocksDisplays
 
-**Plugin de Minecraft (Paper 1.21.x)** para spawnear, animar y gestionar modelos de [block-display.com](https://block-display.com) directamente en tu servidor.
+**Minecraft Plugin (Paper 1.21.x)** to spawn, animate, and manage models from [block-display.com](https://block-display.com) directly on your server.
 
-**Creado por Melonzio**
+**Created by Melonzio**
 
 ---
 
-## ✨ Características
+## ✨ Features
 
-- 🎭 **Spawn de modelos** — Importa cualquier modelo de block-display.com con su ID
-- 🎬 **Animaciones** — Reproduce las animaciones nativas de los modelos con control play/stop
-- ⚡ **Control de velocidad** — Ajusta la velocidad de animación (0.25x a 4x)
-- 🔄 **Rotación** — Rota los modelos en cualquier ángulo
-- 💾 **Persistencia** — Los modelos sobreviven reinicios del servidor
-- 📋 **Lista interactiva** — Chat clickeable para gestionar modelos
-- 🔍 **Tab completion** — Autocompletado completo en todos los comandos
-- 🔇 **Sin spam en consola** — Los mensajes de data merge se silencian automáticamente
+- 🎭 **Model Spawning** — Import any model from block-display.com using its ID
+- 🎬 **Animations** — Play native model animations with full play/stop control
+- ⚡ **Speed Control** — Adjust animation playback speed (0.25x to 4x)
+- 🔄 **Rotation** — Rotate models to any angle
+- 💾 **Persistence** — Models survive server restarts
+- 📋 **Interactive List** — Clickable chat interface to manage active models
+- 🔍 **Tab Completion** — Full autocomplete support for all commands
+- 🔇 **No Console Spam** — Data merge entity messages are automatically silenced
 
-## 📦 Instalación
+## 📦 Installation
 
-1. Descarga `SuperBlocksDisplays-1.0.0.jar` de [Releases](https://github.com/Scrulius/SuperBlocksDisplays/releases)
-2. Colócalo en la carpeta `plugins/` de tu servidor Paper
-3. Reinicia el servidor
-4. ¡Listo! Usa `/bde help` para ver los comandos
+1. Download `SuperBlocksDisplays-1.0.0.jar` from [Releases](https://github.com/Scrulius/SuperBlocksDisplays/releases)
+2. Place it in your Paper server's `plugins/` folder
+3. Restart the server
+4. You're done! Use `/bde help` to see available commands
 
-## 🎮 Comandos
+## 🎮 Commands
 
-| Comando | Descripción |
+| Command | Description |
 |---------|------------|
-| `/bde spawn <id>` | Spawnea un modelo por ID |
-| `/bde remove [grupo]` | Elimina el modelo más cercano o por ID |
-| `/bde list` | Lista todos los modelos activos |
-| `/bde rotate <yaw> [grupo]` | Rota un modelo (0-360°) |
-| `/bde anim <play\|stop> [grupo]` | Controla la animación |
-| `/bde speed <0.25-4.0> [grupo]` | Ajusta velocidad de animación |
-| `/bde info [grupo]` | Muestra detalles del modelo |
-| `/bde clearcache` | Limpia la caché de modelos |
-| `/bde help` | Muestra la ayuda |
+| `/bde spawn <id>` | Spawns a model by its ID |
+| `/bde remove [group]` | Removes the specified model or the nearest one |
+| `/bde list` | Lists all active models |
+| `/bde rotate <yaw> [group]` | Rotates a model (0-360°) |
+| `/bde anim <play\|stop> [group]` | Controls model animation |
+| `/bde speed <0.25-4.0> [group]` | Sets animation playback speed |
+| `/bde info [group]` | Shows detailed information about a model |
+| `/bde clearcache` | Clears the downloaded models cache |
+| `/bde help` | Displays the help menu |
 
-## 🔑 Permisos
+## 🔑 Permissions
 
-| Permiso | Descripción | Default |
+| Permission | Description | Default |
 |---------|------------|---------|
-| `superblocksdisp.use` | Permite usar todos los comandos | OP |
+| `superblocksdisp.use` | Allows the use of all commands | OP |
 
-## ⚙️ Requisitos
+## ⚙️ Requirements
 
 - **Paper** 1.21.x
 - **Java** 21+
 
 ## 📝 Aliases
 
-El comando principal `/bde` también funciona como `/sbd` y `/blockdisplay`.
+The main command `/bde` can also be used as `/sbd` and `/blockdisplay`.
 
-## 📄 Licencia
+## 📄 License
 
-Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.

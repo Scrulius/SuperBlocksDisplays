@@ -1,6 +1,7 @@
 package com.blockdisplay.plugin;
 
 import org.bukkit.Bukkit;
+import org.bukkit.GameRule;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
@@ -22,6 +23,7 @@ public class ModelGroup {
     private float yawOffset = 0;
     private ModelData modelData;
     private boolean animating = false;
+    private boolean loopAnim = true;
     private float animSpeed = 1.0f; // Animation speed multiplier (0.25x to 4x)
 
     private static final Pattern SPLIT_PATTERN = Pattern.compile("(?<=\\}),(?=\\{id:\"minecraft:)");
@@ -66,6 +68,11 @@ public class ModelGroup {
         String uniqueTag = "bde_group_" + groupId.toString().replace("-", "");
         String dimension = world.getKey().toString();
 
+        Boolean originalFeedback = world.getGameRuleValue(GameRule.SEND_COMMAND_FEEDBACK);
+        if (Boolean.TRUE.equals(originalFeedback)) {
+            world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, false);
+        }
+
         for (String rawSnbt : modelData.content.passengers) {
             String[] individualParts = SPLIT_PATTERN.split(rawSnbt);
 
@@ -89,7 +96,7 @@ public class ModelGroup {
                         dimension, origin.getX(), origin.getY(), origin.getZ(), entityType, nbt);
 
                 try {
-                    Bukkit.dispatchCommand(SilentCommandSender.getInstance(), cmd);
+                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
                 } catch (Exception e) {
                     plugin.getLogger().warning("Failed to summon part: " + e.getMessage());
                 }
@@ -102,11 +109,15 @@ public class ModelGroup {
                         "execute in %s positioned %f %f %f run %s",
                         dimension, origin.getX(), origin.getY(), origin.getZ(), hitboxCmd);
                 try {
-                    Bukkit.dispatchCommand(SilentCommandSender.getInstance(), cmd);
+                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
                 } catch (Exception e) {
                     plugin.getLogger().warning("Failed to summon hitbox: " + e.getMessage());
                 }
             }
+        }
+
+        if (Boolean.TRUE.equals(originalFeedback)) {
+            world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, true);
         }
 
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
@@ -153,4 +164,6 @@ public class ModelGroup {
     public float getYawOffset() { return yawOffset; }
     public float getAnimSpeed() { return animSpeed; }
     public void setAnimSpeed(float animSpeed) { this.animSpeed = Math.max(0.25f, Math.min(4.0f, animSpeed)); }
+    public boolean isLoopAnim() { return loopAnim; }
+    public void setLoopAnim(boolean loopAnim) { this.loopAnim = loopAnim; }
 }

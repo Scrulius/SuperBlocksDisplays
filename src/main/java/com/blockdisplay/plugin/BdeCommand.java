@@ -89,11 +89,13 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                 ModelGroup group = new ModelGroup(loc, modelId);
                 group.spawn(modelData, plugin);
                 plugin.getActiveGroups().put(group.getGroupId(), group);
-                plugin.getPersistenceManager().saveGroup(group.getGroupId(), modelId, loc, 0f);
 
                 if (modelData.hasAnimations()) {
                     group.setAnimating(true);
+                    group.setLoopAnim(true);
                 }
+
+                plugin.getPersistenceManager().saveGroup(group);
 
                 player.sendMessage(PREFIX + ChatColor.GREEN + "Model " + ChatColor.WHITE + modelId
                         + ChatColor.GREEN + " spawned! ID: " + ChatColor.GRAY + group.getGroupId().toString().substring(0, 8));
@@ -189,7 +191,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
         if (target != null) {
             target.setYaw(yaw);
-            plugin.getPersistenceManager().saveGroup(target.getGroupId(), target.getModelId(), target.getOrigin(), yaw);
+            plugin.getPersistenceManager().saveGroup(target);
             player.sendMessage(PREFIX + ChatColor.GREEN + "Model rotated to " + ChatColor.WHITE + yaw + "°");
         } else {
             player.sendMessage(PREFIX + ChatColor.RED + "No model found. Specify a group ID or stand near a model.");
@@ -204,7 +206,20 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         }
 
         String subAction = args[1].toLowerCase();
-        ModelGroup target = (args.length >= 3) ? findGroupByPartialId(args[2]) : getNearestGroup(player);
+        boolean isPlay = subAction.equals("play");
+        boolean isStop = subAction.equals("stop");
+        boolean loop = true;
+
+        int targetIndex = 2;
+        if (isPlay && args.length >= 3) {
+            String mode = args[2].toLowerCase();
+            if (mode.equals("once") || mode.equals("loop")) {
+                loop = mode.equals("loop");
+                targetIndex = 3;
+            }
+        }
+
+        ModelGroup target = (args.length >= targetIndex + 1) ? findGroupByPartialId(args[targetIndex]) : getNearestGroup(player);
 
         if (target == null) {
             player.sendMessage(PREFIX + ChatColor.RED + "No model found.");
@@ -216,17 +231,18 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        switch (subAction) {
-            case "play" -> {
-                target.setAnimating(true);
-                plugin.getAnimationManager().resetTick(target.getGroupId());
-                player.sendMessage(PREFIX + ChatColor.GREEN + "Animation started ▶ (" + target.getAnimSpeed() + "x)");
-            }
-            case "stop" -> {
-                target.setAnimating(false);
-                player.sendMessage(PREFIX + ChatColor.YELLOW + "Animation stopped ⏸");
-            }
-            default -> player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde anim <play|stop> [group_id]");
+        if (isPlay) {
+            target.setAnimating(true);
+            target.setLoopAnim(loop);
+            plugin.getAnimationManager().resetTick(target.getGroupId());
+            plugin.getPersistenceManager().saveGroup(target);
+            player.sendMessage(PREFIX + ChatColor.GREEN + "Animation started ▶ (" + target.getAnimSpeed() + "x) Mode: " + (loop ? "Loop" : "Once"));
+        } else if (isStop) {
+            target.setAnimating(false);
+            plugin.getPersistenceManager().saveGroup(target);
+            player.sendMessage(PREFIX + ChatColor.YELLOW + "Animation stopped ⏸");
+        } else {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde anim <play|stop> [loop|once] [group_id]");
         }
     }
 
@@ -264,6 +280,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
         target.setAnimSpeed(speed);
         plugin.getAnimationManager().resetTick(target.getGroupId());
+        plugin.getPersistenceManager().saveGroup(target);
         player.sendMessage(PREFIX + ChatColor.GREEN + "Animation speed set to " + ChatColor.WHITE + speed + "x");
     }
 
@@ -290,7 +307,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
         if (data != null && data.hasAnimations()) {
             String animLine = target.isAnimating()
-                    ? ChatColor.GREEN + "Playing ▶ " + ChatColor.WHITE + target.getAnimSpeed() + "x"
+                    ? ChatColor.GREEN + "Playing ▶ " + ChatColor.WHITE + target.getAnimSpeed() + "x " + ChatColor.GRAY + "(" + (target.isLoopAnim() ? "Loop" : "Once") + ")"
                     : ChatColor.YELLOW + "Stopped ⏸";
             player.sendMessage(ChatColor.GRAY + " Animation: " + animLine);
         } else {
@@ -318,7 +335,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + " /bde remove [group]" + ChatColor.GRAY + " - Remove model");
         player.sendMessage(ChatColor.YELLOW + " /bde list" + ChatColor.GRAY + " - List all active models");
         player.sendMessage(ChatColor.YELLOW + " /bde rotate <yaw> [group]" + ChatColor.GRAY + " - Rotate a model");
-        player.sendMessage(ChatColor.YELLOW + " /bde anim <play|stop> [group]" + ChatColor.GRAY + " - Toggle animation");
+        player.sendMessage(ChatColor.YELLOW + " /bde anim <play|stop> [loop|once] [group]" + ChatColor.GRAY + " - Toggle animation");
         player.sendMessage(ChatColor.YELLOW + " /bde speed <0.25-4.0> [group]" + ChatColor.GRAY + " - Set anim speed");
         player.sendMessage(ChatColor.YELLOW + " /bde info [group]" + ChatColor.GRAY + " - Show model details");
         player.sendMessage(ChatColor.YELLOW + " /bde clearcache" + ChatColor.GRAY + " - Clear model cache");
@@ -358,11 +375,20 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             }
             case "anim" -> {
                 if (args.length == 2) return filterStartsWith(Arrays.asList("play", "stop"), args[1]);
-                if (args.length == 3) {
-                    List<String> options = new ArrayList<>();
-                    options.add("nearest");
+                if (args.length == 3 && args[1].equalsIgnoreCase("play")) {
+                    List<String> options = new ArrayList<>(Arrays.asList("loop", "once"));
                     options.addAll(getGroupIdSuggestions());
+                    options.add("nearest");
                     return filterStartsWith(options, args[2]);
+                }
+                if (args.length >= 3) {
+                    int targetIdx = (args[1].equalsIgnoreCase("play") && (args[2].equalsIgnoreCase("loop") || args[2].equalsIgnoreCase("once"))) ? 3 : 2;
+                    if (args.length == targetIdx + 1) {
+                        List<String> options = new ArrayList<>();
+                        options.add("nearest");
+                        options.addAll(getGroupIdSuggestions());
+                        return filterStartsWith(options, args[targetIdx]);
+                    }
                 }
             }
             case "speed" -> {

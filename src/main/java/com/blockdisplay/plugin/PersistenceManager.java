@@ -28,14 +28,17 @@ public class PersistenceManager {
         this.config = YamlConfiguration.loadConfiguration(file);
     }
 
-    public void saveGroup(UUID groupId, String modelId, Location loc, float yaw) {
-        String path = "groups." + groupId.toString();
-        config.set(path + ".model", modelId);
-        config.set(path + ".world", loc.getWorld().getName());
-        config.set(path + ".x", loc.getX());
-        config.set(path + ".y", loc.getY());
-        config.set(path + ".z", loc.getZ());
-        config.set(path + ".yaw", yaw);
+    public void saveGroup(ModelGroup group) {
+        String path = "groups." + group.getGroupId().toString();
+        config.set(path + ".model", group.getModelId());
+        config.set(path + ".world", group.getOrigin().getWorld().getName());
+        config.set(path + ".x", group.getOrigin().getX());
+        config.set(path + ".y", group.getOrigin().getY());
+        config.set(path + ".z", group.getOrigin().getZ());
+        config.set(path + ".yaw", group.getYawOffset());
+        config.set(path + ".animating", group.isAnimating());
+        config.set(path + ".loopAnim", group.isLoopAnim());
+        config.set(path + ".animSpeed", group.getAnimSpeed());
         save();
     }
 
@@ -73,6 +76,9 @@ public class PersistenceManager {
             double y = config.getDouble(path + ".y");
             double z = config.getDouble(path + ".z");
             float yaw = (float) config.getDouble(path + ".yaw");
+            boolean animating = config.getBoolean(path + ".animating", false);
+            boolean loopAnim = config.getBoolean(path + ".loopAnim", true);
+            float animSpeed = (float) config.getDouble(path + ".animSpeed", 1.0);
 
             Location loc = new Location(world, x, y, z, yaw, 0);
 
@@ -83,8 +89,10 @@ public class PersistenceManager {
                         group.reconnectOrSpawn(modelData, plugin);
                         group.setYaw(yaw);
 
-                        // Auto-start animation if model has animations
-                        if (modelData.hasAnimations()) {
+                        group.setLoopAnim(loopAnim);
+                        group.setAnimSpeed(animSpeed);
+                        // Auto-start animation if it was animating before and has animations
+                        if (animating && modelData.hasAnimations()) {
                             group.setAnimating(true);
                         }
 

@@ -1,6 +1,8 @@
 package com.blockdisplay.plugin;
 
 import org.bukkit.Bukkit;
+import org.bukkit.GameRule;
+import org.bukkit.World;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.List;
@@ -59,27 +61,51 @@ public class AnimationManager extends BukkitRunnable {
 
             for (int i = 0; i < framesToAdvance; i++) {
                 int currentAnimTick = tick % (maxTick + 1);
+                
+                // Stop if we reach the end and loop is disabled
+                if (currentAnimTick == maxTick && !group.isLoopAnim()) {
+                    group.setAnimating(false);
+                    plugin.getPersistenceManager().saveGroup(group);
+                    tickCounters.remove(gid);
+                    accumulators.remove(gid);
+                    break;
+                }
+
                 List<String> commands = anim.get(String.valueOf(currentAnimTick));
 
                 if (commands != null) {
-                    String dimension = group.getOrigin().getWorld().getKey().toString();
-                    double x = group.getOrigin().getX();
-                    double y = group.getOrigin().getY();
-                    double z = group.getOrigin().getZ();
+                    World world = group.getOrigin().getWorld();
+                    if (world != null) {
+                        String dimension = world.getKey().toString();
+                        double x = group.getOrigin().getX();
+                        double y = group.getOrigin().getY();
+                        double z = group.getOrigin().getZ();
 
-                    for (String cmd : commands) {
-                        String fullCommand = String.format(Locale.US,
-                                "execute in %s positioned %f %f %f run %s",
-                                dimension, x, y, z, cmd);
-                        try {
-                            Bukkit.dispatchCommand(SilentCommandSender.getInstance(), fullCommand);
-                        } catch (Exception ignored) {}
+                        Boolean originalFeedback = world.getGameRuleValue(GameRule.SEND_COMMAND_FEEDBACK);
+                        if (Boolean.TRUE.equals(originalFeedback)) {
+                            world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, false);
+                        }
+
+                        for (String cmd : commands) {
+                            String fullCommand = String.format(Locale.US,
+                                    "execute in %s positioned %f %f %f run %s",
+                                    dimension, x, y, z, cmd);
+                            try {
+                                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), fullCommand);
+                            } catch (Exception ignored) {}
+                        }
+
+                        if (Boolean.TRUE.equals(originalFeedback)) {
+                            world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, true);
+                        }
                     }
                 }
                 tick++;
             }
 
-            tickCounters.put(gid, tick);
+            if (group.isAnimating()) {
+                tickCounters.put(gid, tick);
+            }
         }
     }
 
