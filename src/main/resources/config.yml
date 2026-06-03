@@ -1,0 +1,28 @@
+# SuperBlocksDisplays Configuration
+
+# Default radius (in blocks) when searching for the nearest model.
+# Used by commands like /bde remove, /bde tp, /bde info when no name is given.
+search-radius: 15
+
+# Radius (in blocks) for entity cleanup when removing a model or on server restart.
+# Larger values catch more orphaned entities but take longer to scan.
+cleanup-radius: 50
+
+# Maximum radius allowed for /bde purge.
+purge-max-radius: 10
+
+# Maximum number of active models on the server. Set to -1 for unlimited.
+max-models: -1
+
+# Whether to auto-play animations when a model is spawned (if the model has animations).
+auto-play-animations: true
+
+# Default animation speed for newly spawned models. Range: 0.25 - 4.0
+default-animation-speed: 1.0
+
+# Default animation mode when auto-playing. Options: loop, once
+default-animation-mode: loop
+
+# Minimum and maximum allowed animation speed.
+min-animation-speed: 0.25
+max-animation-speed: 4.0

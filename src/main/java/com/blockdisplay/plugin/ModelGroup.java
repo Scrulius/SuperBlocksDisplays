@@ -50,7 +50,8 @@ public class ModelGroup {
         if (world == null) return;
 
         // Remove any stale entities left over from a previous session (e.g. after crash)
-        for (Entity e : world.getNearbyEntities(origin, 50, 50, 50)) {
+        int r = plugin.getCleanupRadius();
+        for (Entity e : world.getNearbyEntities(origin, r, r, r)) {
             String idStr = e.getPersistentDataContainer().get(groupKey, PersistentDataType.STRING);
             if (idStr != null && idStr.equals(groupId.toString())) {
                 e.remove();
@@ -187,7 +188,8 @@ public class ModelGroup {
         World world = origin.getWorld();
         if (world != null) {
             NamespacedKey groupKey = new NamespacedKey(plugin, "group_id");
-            for (Entity e : world.getNearbyEntities(origin, 50, 50, 50)) {
+            int r = plugin.getCleanupRadius();
+            for (Entity e : world.getNearbyEntities(origin, r, r, r)) {
                 String idStr = e.getPersistentDataContainer().get(groupKey, PersistentDataType.STRING);
                 if (idStr != null && idStr.equals(groupId.toString())) {
                     e.remove();
@@ -220,7 +222,7 @@ public class ModelGroup {
     public void setAnimating(boolean animating) { this.animating = animating; }
     public float getYawOffset() { return yawOffset; }
     public float getAnimSpeed() { return animSpeed; }
-    public void setAnimSpeed(float animSpeed) { this.animSpeed = Math.max(0.25f, Math.min(4.0f, animSpeed)); }
+    public void setAnimSpeed(float animSpeed) { this.animSpeed = animSpeed; }
     public boolean isLoopAnim() { return loopAnim; }
     public void setLoopAnim(boolean loopAnim) { this.loopAnim = loopAnim; }
 }

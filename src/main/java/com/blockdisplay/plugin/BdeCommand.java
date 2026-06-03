@@ -101,6 +101,13 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
+        // Check max models limit
+        int maxModels = plugin.getMaxModels();
+        if (maxModels > 0 && plugin.getActiveGroups().size() >= maxModels) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Model limit reached (" + maxModels + "). Remove a model first.");
+            return;
+        }
+
         // Check library first
         ModelData libraryData = plugin.getModelManager().loadFromLibrary(source);
         if (libraryData != null) {
@@ -129,9 +136,10 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         group.spawn(modelData, plugin);
         plugin.getActiveGroups().put(group.getGroupId(), group);
 
-        if (modelData.hasAnimations()) {
+        if (plugin.isAutoPlayAnimations() && modelData.hasAnimations()) {
             group.setAnimating(true);
-            group.setLoopAnim(true);
+            group.setLoopAnim(plugin.isDefaultLoopMode());
+            group.setAnimSpeed(plugin.getDefaultAnimSpeed());
         }
 
         plugin.getPersistenceManager().saveGroup(group);
@@ -139,7 +147,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(PREFIX + ChatColor.GREEN + "Model " + ChatColor.WHITE + displayName
                 + ChatColor.GREEN + " spawned! (" + ChatColor.GRAY + modelId + ChatColor.GREEN + ")");
 
-        if (modelData.hasAnimations()) {
+        if (modelData.hasAnimations() && plugin.isAutoPlayAnimations()) {
             player.sendMessage(PREFIX + ChatColor.AQUA + "✦ This model has animations! (auto-playing)");
         }
     }
@@ -308,8 +316,11 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
     // ========== SPEED ==========
     private void handleSpeed(Player player, String[] args) {
+        float minSpeed = plugin.getMinAnimSpeed();
+        float maxSpeed = plugin.getMaxAnimSpeed();
+
         if (args.length < 2) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde speed <0.25-4.0> [name|nearest]");
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde speed <" + minSpeed + "-" + maxSpeed + "> [name|nearest]");
             return;
         }
 
@@ -317,12 +328,12 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         try {
             speed = Float.parseFloat(args[1]);
         } catch (NumberFormatException e) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Invalid speed. Use a number between 0.25 and 4.0");
+            player.sendMessage(PREFIX + ChatColor.RED + "Invalid speed. Use a number between " + minSpeed + " and " + maxSpeed);
             return;
         }
 
-        if (speed < 0.25f || speed > 4.0f) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Speed must be between 0.25 and 4.0");
+        if (speed < minSpeed || speed > maxSpeed) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Speed must be between " + minSpeed + " and " + maxSpeed);
             return;
         }
 
@@ -383,8 +394,10 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
     // ========== PURGE ==========
     private void handlePurge(Player player, String[] args) {
+        int maxRadius = plugin.getPurgeMaxRadius();
+
         if (args.length < 2) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde purge <1-10>");
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde purge <1-" + maxRadius + ">");
             return;
         }
 
@@ -392,12 +405,12 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         try {
             radius = Integer.parseInt(args[1]);
         } catch (NumberFormatException e) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Invalid radius. Use a number between 1 and 10.");
+            player.sendMessage(PREFIX + ChatColor.RED + "Invalid radius. Use a number between 1 and " + maxRadius + ".");
             return;
         }
 
-        if (radius < 1 || radius > 10) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Radius must be between 1 and 10.");
+        if (radius < 1 || radius > maxRadius) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Radius must be between 1 and " + maxRadius + ".");
             return;
         }
 
@@ -630,7 +643,8 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         Entity nearest = null;
         double minDistance = Double.MAX_VALUE;
 
-        for (Entity entity : player.getNearbyEntities(15, 15, 15)) {
+        int r = plugin.getSearchRadius();
+        for (Entity entity : player.getNearbyEntities(r, r, r)) {
             if (entity instanceof Display && entity.getPersistentDataContainer().has(groupKey, PersistentDataType.STRING)) {
                 double dist = entity.getLocation().distanceSquared(player.getLocation());
                 if (dist < minDistance) {

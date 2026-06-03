@@ -17,8 +17,23 @@ public class BlockDisplayPlugin extends JavaPlugin {
     private CommandFeedbackFilter logFilter;
     private final Map<UUID, ModelGroup> activeGroups = new HashMap<>();
 
+    // Config values
+    private int searchRadius;
+    private int cleanupRadius;
+    private int purgeMaxRadius;
+    private int maxModels;
+    private boolean autoPlayAnimations;
+    private float defaultAnimSpeed;
+    private boolean defaultLoopMode;
+    private float minAnimSpeed;
+    private float maxAnimSpeed;
+
     @Override
     public void onEnable() {
+        // Save default config if not present and load values
+        saveDefaultConfig();
+        loadConfigValues();
+
         // Install Log4j2 filter to suppress "Modified entity data" console spam
         this.logFilter = new CommandFeedbackFilter();
         ((Logger) LogManager.getRootLogger()).addFilter(logFilter);
@@ -42,6 +57,19 @@ public class BlockDisplayPlugin extends JavaPlugin {
         getLogger().info("SuperBlocksDisplays enabled. " + activeGroups.size() + " models loaded.");
     }
 
+    private void loadConfigValues() {
+        reloadConfig();
+        this.searchRadius = getConfig().getInt("search-radius", 15);
+        this.cleanupRadius = getConfig().getInt("cleanup-radius", 50);
+        this.purgeMaxRadius = getConfig().getInt("purge-max-radius", 10);
+        this.maxModels = getConfig().getInt("max-models", -1);
+        this.autoPlayAnimations = getConfig().getBoolean("auto-play-animations", true);
+        this.defaultAnimSpeed = (float) getConfig().getDouble("default-animation-speed", 1.0);
+        this.defaultLoopMode = getConfig().getString("default-animation-mode", "loop").equalsIgnoreCase("loop");
+        this.minAnimSpeed = (float) getConfig().getDouble("min-animation-speed", 0.25);
+        this.maxAnimSpeed = (float) getConfig().getDouble("max-animation-speed", 4.0);
+    }
+
     @Override
     public void onDisable() {
         if (animationManager != null) {
@@ -63,25 +91,23 @@ public class BlockDisplayPlugin extends JavaPlugin {
         getLogger().info("SuperBlocksDisplays disabled.");
     }
 
-    public ModelManager getModelManager() {
-        return modelManager;
-    }
+    // Config getters
+    public int getSearchRadius() { return searchRadius; }
+    public int getCleanupRadius() { return cleanupRadius; }
+    public int getPurgeMaxRadius() { return purgeMaxRadius; }
+    public int getMaxModels() { return maxModels; }
+    public boolean isAutoPlayAnimations() { return autoPlayAnimations; }
+    public float getDefaultAnimSpeed() { return defaultAnimSpeed; }
+    public boolean isDefaultLoopMode() { return defaultLoopMode; }
+    public float getMinAnimSpeed() { return minAnimSpeed; }
+    public float getMaxAnimSpeed() { return maxAnimSpeed; }
 
-    public PersistenceManager getPersistenceManager() {
-        return persistenceManager;
-    }
-
-    public AnimationManager getAnimationManager() {
-        return animationManager;
-    }
-
-    public SilentCommandSender getSilentSender() {
-        return silentSender;
-    }
-
-    public Map<UUID, ModelGroup> getActiveGroups() {
-        return activeGroups;
-    }
+    // Service getters
+    public ModelManager getModelManager() { return modelManager; }
+    public PersistenceManager getPersistenceManager() { return persistenceManager; }
+    public AnimationManager getAnimationManager() { return animationManager; }
+    public SilentCommandSender getSilentSender() { return silentSender; }
+    public Map<UUID, ModelGroup> getActiveGroups() { return activeGroups; }
 
     /**
      * Find a model group by its display name (case-insensitive).
