@@ -1,5 +1,7 @@
 package com.blockdisplay.plugin;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.Logger;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.HashMap;
@@ -11,10 +13,17 @@ public class BlockDisplayPlugin extends JavaPlugin {
     private ModelManager modelManager;
     private PersistenceManager persistenceManager;
     private AnimationManager animationManager;
+    private SilentCommandSender silentSender;
+    private CommandFeedbackFilter logFilter;
     private final Map<UUID, ModelGroup> activeGroups = new HashMap<>();
 
     @Override
     public void onEnable() {
+        // Install Log4j2 filter to suppress "Modified entity data" console spam
+        this.logFilter = new CommandFeedbackFilter();
+        ((Logger) LogManager.getRootLogger()).addFilter(logFilter);
+
+        this.silentSender = new SilentCommandSender();
         this.modelManager = new ModelManager(this);
         this.persistenceManager = new PersistenceManager(this);
 
@@ -30,7 +39,7 @@ public class BlockDisplayPlugin extends JavaPlugin {
         getCommand("bde").setExecutor(bdeCommand);
         getCommand("bde").setTabCompleter(bdeCommand);
 
-        getLogger().info("BlockDisplayPlugin enabled. " + activeGroups.size() + " models loaded.");
+        getLogger().info("SuperBlocksDisplays enabled. " + activeGroups.size() + " models loaded.");
     }
 
     @Override
@@ -38,7 +47,20 @@ public class BlockDisplayPlugin extends JavaPlugin {
         if (animationManager != null) {
             animationManager.cancel();
         }
-        getLogger().info("BlockDisplayPlugin disabled.");
+        // Remove all display entities so they don't duplicate on restart
+        int removedCount = 0;
+        for (ModelGroup group : activeGroups.values()) {
+            removedCount += group.getPartCount();
+            group.remove(this);
+        }
+        activeGroups.clear();
+        getLogger().info("Cleaned up " + removedCount + " entities from active models.");
+
+        // Disable our log filter cleanly (stop() prevents it from matching)
+        if (logFilter != null) {
+            logFilter.stop();
+        }
+        getLogger().info("SuperBlocksDisplays disabled.");
     }
 
     public ModelManager getModelManager() {
@@ -53,7 +75,23 @@ public class BlockDisplayPlugin extends JavaPlugin {
         return animationManager;
     }
 
+    public SilentCommandSender getSilentSender() {
+        return silentSender;
+    }
+
     public Map<UUID, ModelGroup> getActiveGroups() {
         return activeGroups;
+    }
+
+    /**
+     * Find a model group by its display name (case-insensitive).
+     */
+    public ModelGroup findGroupByName(String name) {
+        for (ModelGroup group : activeGroups.values()) {
+            if (group.getDisplayName().equalsIgnoreCase(name)) {
+                return group;
+            }
+        }
+        return null;
     }
 }

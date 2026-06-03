@@ -27,11 +27,14 @@ public class AnimationManager extends BukkitRunnable {
 
     @Override
     public void run() {
+        SilentCommandSender silentSender = plugin.getSilentSender();
+
         for (Map.Entry<UUID, ModelGroup> entry : plugin.getActiveGroups().entrySet()) {
             ModelGroup group = entry.getValue();
             ModelData data = group.getModelData();
 
             if (!group.isAnimating()) continue;
+            if (!group.isReady()) continue;
             if (data == null || !data.hasAnimations()) continue;
 
             Map<String, List<String>> anim = data.content.datapack.anim_keyframes.get("default");
@@ -79,23 +82,24 @@ public class AnimationManager extends BukkitRunnable {
                         double y = group.getOrigin().getY();
                         double z = group.getOrigin().getZ();
 
+                        // Suppress feedback to OP players in-game
                         Boolean originalFeedback = world.getGameRuleValue(GameRule.SEND_COMMAND_FEEDBACK);
                         Boolean originalLog = world.getGameRuleValue(GameRule.LOG_ADMIN_COMMANDS);
-                        
-                        if (Boolean.TRUE.equals(originalFeedback)) world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, false);
-                        if (Boolean.TRUE.equals(originalLog)) world.setGameRule(GameRule.LOG_ADMIN_COMMANDS, false);
+                        world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, false);
+                        world.setGameRule(GameRule.LOG_ADMIN_COMMANDS, false);
 
                         for (String cmd : commands) {
                             String fullCommand = String.format(Locale.US,
                                     "execute in %s positioned %f %f %f run %s",
                                     dimension, x, y, z, cmd);
                             try {
-                                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), fullCommand);
+                                Bukkit.dispatchCommand(silentSender, fullCommand);
                             } catch (Exception ignored) {}
                         }
 
-                        if (Boolean.TRUE.equals(originalFeedback)) world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, true);
-                        if (Boolean.TRUE.equals(originalLog)) world.setGameRule(GameRule.LOG_ADMIN_COMMANDS, true);
+                        // Restore original gamerule values
+                        world.setGameRule(GameRule.SEND_COMMAND_FEEDBACK, Boolean.TRUE.equals(originalFeedback));
+                        world.setGameRule(GameRule.LOG_ADMIN_COMMANDS, Boolean.TRUE.equals(originalLog));
                     }
                 }
                 tick++;

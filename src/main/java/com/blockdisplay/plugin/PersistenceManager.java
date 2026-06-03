@@ -31,6 +31,7 @@ public class PersistenceManager {
     public void saveGroup(ModelGroup group) {
         String path = "groups." + group.getGroupId().toString();
         config.set(path + ".model", group.getModelId());
+        config.set(path + ".name", group.getDisplayName());
         config.set(path + ".world", group.getOrigin().getWorld().getName());
         config.set(path + ".x", group.getOrigin().getX());
         config.set(path + ".y", group.getOrigin().getY());
@@ -64,11 +65,12 @@ public class PersistenceManager {
             UUID groupId = UUID.fromString(uuidStr);
             String path = "groups." + uuidStr;
             String modelId = config.getString(path + ".model");
+            String displayName = config.getString(path + ".name", "unnamed_" + uuidStr.substring(0, 6));
             String worldName = config.getString(path + ".world");
             World world = plugin.getServer().getWorld(worldName);
 
             if (world == null) {
-                plugin.getLogger().warning("World '" + worldName + "' not found. Skipping model " + modelId);
+                plugin.getLogger().warning("World '" + worldName + "' not found. Skipping model " + displayName);
                 continue;
             }
 
@@ -85,7 +87,7 @@ public class PersistenceManager {
             plugin.getModelManager().fetchModel(modelId).thenAccept(modelData -> {
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (modelData != null) {
-                        ModelGroup group = new ModelGroup(loc, groupId, modelId);
+                        ModelGroup group = new ModelGroup(loc, groupId, modelId, displayName);
                         group.reconnectOrSpawn(modelData, plugin);
                         group.setYaw(yaw);
 
@@ -97,9 +99,9 @@ public class PersistenceManager {
                         }
 
                         plugin.getActiveGroups().put(groupId, group);
-                        plugin.getLogger().info("Loaded model " + modelId + " (group " + groupId.toString().substring(0, 8) + ")");
+                        plugin.getLogger().info("Loaded model '" + displayName + "' (" + modelId + ")");
                     } else {
-                        plugin.getLogger().warning("Could not reload model " + modelId + " - may be expired on API.");
+                        plugin.getLogger().warning("Could not reload model '" + displayName + "' (" + modelId + ") - may be expired on API.");
                     }
                 });
             });

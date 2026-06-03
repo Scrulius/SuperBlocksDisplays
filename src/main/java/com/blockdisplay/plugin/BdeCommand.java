@@ -24,6 +24,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class BdeCommand implements CommandExecutor, TabCompleter {
@@ -31,8 +32,11 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
     private final BlockDisplayPlugin plugin;
     private static final String PREFIX = ChatColor.DARK_GRAY + "[" + ChatColor.GOLD + "SBD" + ChatColor.DARK_GRAY + "] " + ChatColor.RESET;
 
+    // Only allow alphanumeric characters and underscores, 2-32 chars
+    private static final Pattern NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]{2,32}$");
+
     private static final List<String> SUBCOMMANDS = Arrays.asList(
-            "spawn", "remove", "list", "rotate", "anim", "speed", "info", "clearcache", "help"
+            "spawn", "remove", "purge", "list", "rotate", "anim", "speed", "info", "clearcache", "help"
     );
 
     public BdeCommand(BlockDisplayPlugin plugin) {
@@ -61,6 +65,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             case "anim" -> handleAnim(player, args);
             case "speed" -> handleSpeed(player, args);
             case "info" -> handleInfo(player, args);
+            case "purge" -> handlePurge(player, args);
             case "clearcache" -> handleClearCache(player);
             case "help" -> sendHelp(player);
             default -> player.sendMessage(PREFIX + ChatColor.RED + "Unknown command. Use /bde help");
@@ -71,11 +76,26 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
     // ========== SPAWN ==========
     private void handleSpawn(Player player, String[] args) {
-        if (args.length < 2) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde spawn <model_id>");
+        if (args.length < 3) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde spawn <model_id> <name>");
+            player.sendMessage(PREFIX + ChatColor.GRAY + "Name must be 2-32 characters, alphanumeric or underscores.");
             return;
         }
         String modelId = args[1];
+        String displayName = args[2];
+
+        // Validate name format
+        if (!NAME_PATTERN.matcher(displayName).matches()) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Invalid name! Use 2-32 characters: letters, numbers, and underscores only.");
+            return;
+        }
+
+        // Check for duplicate name
+        if (plugin.findGroupByName(displayName) != null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "A model named '" + displayName + "' already exists. Choose another name.");
+            return;
+        }
+
         player.sendMessage(PREFIX + ChatColor.YELLOW + "Fetching model " + ChatColor.WHITE + modelId + ChatColor.YELLOW + "...");
 
         plugin.getModelManager().fetchModel(modelId).thenAccept(modelData -> {
@@ -86,7 +106,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                 }
 
                 Location loc = player.getLocation();
-                ModelGroup group = new ModelGroup(loc, modelId);
+                ModelGroup group = new ModelGroup(loc, modelId, displayName);
                 group.spawn(modelData, plugin);
                 plugin.getActiveGroups().put(group.getGroupId(), group);
 
@@ -97,8 +117,8 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
                 plugin.getPersistenceManager().saveGroup(group);
 
-                player.sendMessage(PREFIX + ChatColor.GREEN + "Model " + ChatColor.WHITE + modelId
-                        + ChatColor.GREEN + " spawned! ID: " + ChatColor.GRAY + group.getGroupId().toString().substring(0, 8));
+                player.sendMessage(PREFIX + ChatColor.GREEN + "Model " + ChatColor.WHITE + displayName
+                        + ChatColor.GREEN + " spawned! (" + ChatColor.GRAY + modelId + ChatColor.GREEN + ")");
 
                 if (modelData.hasAnimations()) {
                     player.sendMessage(PREFIX + ChatColor.AQUA + "✦ This model has animations! (auto-playing)");
@@ -112,20 +132,22 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         ModelGroup target;
 
         if (args.length >= 2) {
-            target = findGroupByPartialId(args[1]);
-            if (target == null && args[1].equalsIgnoreCase("nearest")) {
+            if (args[1].equalsIgnoreCase("nearest")) {
                 target = getNearestGroup(player);
+            } else {
+                target = resolveGroup(args[1]);
             }
         } else {
             target = getNearestGroup(player);
         }
 
         if (target != null) {
-            target.remove();
+            String name = target.getDisplayName();
+            target.remove(plugin);
             plugin.getAnimationManager().removeGroup(target.getGroupId());
             plugin.getActiveGroups().remove(target.getGroupId());
             plugin.getPersistenceManager().removeGroup(target.getGroupId());
-            player.sendMessage(PREFIX + ChatColor.GREEN + "Model removed.");
+            player.sendMessage(PREFIX + ChatColor.GREEN + "Model '" + name + "' removed.");
         } else {
             player.sendMessage(PREFIX + ChatColor.RED + "No model found. Use /bde list to see active models.");
         }
@@ -144,7 +166,6 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
         for (Map.Entry<UUID, ModelGroup> entry : groups.entrySet()) {
             ModelGroup g = entry.getValue();
-            String shortId = g.getGroupId().toString().substring(0, 8);
             Location loc = g.getOrigin();
             String coords = String.format("%.0f, %.0f, %.0f", loc.getX(), loc.getY(), loc.getZ());
 
@@ -160,13 +181,13 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             }
 
             TextComponent line = new TextComponent(
-                    ChatColor.GRAY + " " + shortId + " " +
-                    ChatColor.WHITE + "Model #" + g.getModelId() + " " +
+                    ChatColor.WHITE + " " + g.getDisplayName() + " " +
+                    ChatColor.DARK_GRAY + "(" + ChatColor.GRAY + "#" + g.getModelId() + ChatColor.DARK_GRAY + ") " +
                     ChatColor.DARK_GRAY + "@ " + ChatColor.GRAY + coords + " " +
                     animStatus + " " +
                     ChatColor.DARK_GRAY + "[" + g.getPartCount() + " parts]"
             );
-            line.setClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "/bde info " + shortId));
+            line.setClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "/bde info " + g.getDisplayName()));
             line.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text("Click for details")));
             player.spigot().sendMessage(line);
         }
@@ -175,7 +196,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
     // ========== ROTATE ==========
     private void handleRotate(Player player, String[] args) {
         if (args.length < 2) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde rotate <yaw> [group_id]");
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde rotate <yaw> [name|nearest]");
             return;
         }
 
@@ -187,21 +208,21 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        ModelGroup target = (args.length >= 3) ? findGroupByPartialId(args[2]) : getNearestGroup(player);
+        ModelGroup target = (args.length >= 3) ? resolveGroupOrNearest(args[2], player) : getNearestGroup(player);
 
         if (target != null) {
             target.setYaw(yaw);
             plugin.getPersistenceManager().saveGroup(target);
-            player.sendMessage(PREFIX + ChatColor.GREEN + "Model rotated to " + ChatColor.WHITE + yaw + "°");
+            player.sendMessage(PREFIX + ChatColor.GREEN + "Model '" + target.getDisplayName() + "' rotated to " + ChatColor.WHITE + yaw + "°");
         } else {
-            player.sendMessage(PREFIX + ChatColor.RED + "No model found. Specify a group ID or stand near a model.");
+            player.sendMessage(PREFIX + ChatColor.RED + "No model found. Specify a name or stand near a model.");
         }
     }
 
     // ========== ANIM ==========
     private void handleAnim(Player player, String[] args) {
         if (args.length < 2) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde anim <play|stop> [group_id]");
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde anim <play|stop> [name|nearest]");
             return;
         }
 
@@ -213,7 +234,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         int targetIndex = 2;
         if (isPlay) {
             if (args.length < 3) {
-                player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde anim play <loop|once> [group_id]");
+                player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde anim play <loop|once> [name|nearest]");
                 return;
             }
             String mode = args[2].toLowerCase();
@@ -225,7 +246,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             targetIndex = 3;
         }
 
-        ModelGroup target = (args.length >= targetIndex + 1) ? findGroupByPartialId(args[targetIndex]) : getNearestGroup(player);
+        ModelGroup target = (args.length >= targetIndex + 1) ? resolveGroupOrNearest(args[targetIndex], player) : getNearestGroup(player);
 
         if (target == null) {
             player.sendMessage(PREFIX + ChatColor.RED + "No model found.");
@@ -255,7 +276,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
     // ========== SPEED ==========
     private void handleSpeed(Player player, String[] args) {
         if (args.length < 2) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde speed <0.25-4.0> [group_id]");
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde speed <0.25-4.0> [name|nearest]");
             return;
         }
 
@@ -272,7 +293,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        ModelGroup target = (args.length >= 3) ? findGroupByPartialId(args[2]) : getNearestGroup(player);
+        ModelGroup target = (args.length >= 3) ? resolveGroupOrNearest(args[2], player) : getNearestGroup(player);
 
         if (target == null) {
             player.sendMessage(PREFIX + ChatColor.RED + "No model found.");
@@ -287,12 +308,12 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         target.setAnimSpeed(speed);
         plugin.getAnimationManager().resetTick(target.getGroupId());
         plugin.getPersistenceManager().saveGroup(target);
-        player.sendMessage(PREFIX + ChatColor.GREEN + "Animation speed set to " + ChatColor.WHITE + speed + "x");
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Animation speed for '" + target.getDisplayName() + "' set to " + ChatColor.WHITE + speed + "x");
     }
 
     // ========== INFO ==========
     private void handleInfo(Player player, String[] args) {
-        ModelGroup target = (args.length >= 2) ? findGroupByPartialId(args[1]) : getNearestGroup(player);
+        ModelGroup target = (args.length >= 2) ? resolveGroupOrNearest(args[1], player) : getNearestGroup(player);
 
         if (target == null) {
             player.sendMessage(PREFIX + ChatColor.RED + "No model found.");
@@ -304,8 +325,9 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
         player.sendMessage(ChatColor.DARK_GRAY + "────────────────────────────────");
         player.sendMessage(PREFIX + ChatColor.GOLD + "Model Info");
-        player.sendMessage(ChatColor.GRAY + " Group ID: " + ChatColor.WHITE + target.getGroupId());
+        player.sendMessage(ChatColor.GRAY + " Name: " + ChatColor.WHITE + target.getDisplayName());
         player.sendMessage(ChatColor.GRAY + " Model ID: " + ChatColor.WHITE + target.getModelId());
+        player.sendMessage(ChatColor.GRAY + " Group ID: " + ChatColor.DARK_GRAY + target.getGroupId());
         player.sendMessage(ChatColor.GRAY + " Location: " + ChatColor.WHITE + String.format("%.1f, %.1f, %.1f", loc.getX(), loc.getY(), loc.getZ()));
         player.sendMessage(ChatColor.GRAY + " World: " + ChatColor.WHITE + loc.getWorld().getName());
         player.sendMessage(ChatColor.GRAY + " Parts: " + ChatColor.WHITE + target.getPartCount());
@@ -326,6 +348,38 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.DARK_GRAY + "────────────────────────────────");
     }
 
+    // ========== PURGE ==========
+    private void handlePurge(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde purge <1-10>");
+            return;
+        }
+
+        int radius;
+        try {
+            radius = Integer.parseInt(args[1]);
+        } catch (NumberFormatException e) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Invalid radius. Use a number between 1 and 10.");
+            return;
+        }
+
+        if (radius < 1 || radius > 10) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Radius must be between 1 and 10.");
+            return;
+        }
+
+        int removed = 0;
+        for (Entity entity : player.getNearbyEntities(radius, radius, radius)) {
+            if (entity instanceof Display) {
+                entity.remove();
+                removed++;
+            }
+        }
+
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Purged " + ChatColor.WHITE + removed
+                + ChatColor.GREEN + " display entities within " + ChatColor.WHITE + radius + ChatColor.GREEN + " blocks.");
+    }
+
     // ========== CLEARCACHE ==========
     private void handleClearCache(Player player) {
         plugin.getModelManager().clearCache();
@@ -337,14 +391,15 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.DARK_GRAY + "────────────────────────────────");
         player.sendMessage(PREFIX + ChatColor.GOLD + "SuperBlocksDisplays " + ChatColor.GRAY + "by Melonzio");
         player.sendMessage(ChatColor.DARK_GRAY + "────────────────────────────────");
-        player.sendMessage(ChatColor.YELLOW + " /bde spawn <id>" + ChatColor.GRAY + " - Spawn a model");
-        player.sendMessage(ChatColor.YELLOW + " /bde remove [group]" + ChatColor.GRAY + " - Remove model");
+        player.sendMessage(ChatColor.YELLOW + " /bde spawn <id> <name>" + ChatColor.GRAY + " - Spawn a model");
+        player.sendMessage(ChatColor.YELLOW + " /bde remove [name|nearest]" + ChatColor.GRAY + " - Remove model");
         player.sendMessage(ChatColor.YELLOW + " /bde list" + ChatColor.GRAY + " - List all active models");
-        player.sendMessage(ChatColor.YELLOW + " /bde rotate <yaw> [group]" + ChatColor.GRAY + " - Rotate a model");
-        player.sendMessage(ChatColor.YELLOW + " /bde anim play <loop|once> [group]" + ChatColor.GRAY + " - Play animation");
-        player.sendMessage(ChatColor.YELLOW + " /bde anim stop [group]" + ChatColor.GRAY + " - Stop animation");
-        player.sendMessage(ChatColor.YELLOW + " /bde speed <0.25-4.0> [group]" + ChatColor.GRAY + " - Set anim speed");
-        player.sendMessage(ChatColor.YELLOW + " /bde info [group]" + ChatColor.GRAY + " - Show model details");
+        player.sendMessage(ChatColor.YELLOW + " /bde rotate <yaw> [name|nearest]" + ChatColor.GRAY + " - Rotate a model");
+        player.sendMessage(ChatColor.YELLOW + " /bde anim play <loop|once> [name]" + ChatColor.GRAY + " - Play animation");
+        player.sendMessage(ChatColor.YELLOW + " /bde anim stop [name|nearest]" + ChatColor.GRAY + " - Stop animation");
+        player.sendMessage(ChatColor.YELLOW + " /bde speed <0.25-4.0> [name]" + ChatColor.GRAY + " - Set anim speed");
+        player.sendMessage(ChatColor.YELLOW + " /bde info [name|nearest]" + ChatColor.GRAY + " - Show model details");
+        player.sendMessage(ChatColor.YELLOW + " /bde purge <1-10>" + ChatColor.GRAY + " - Kill all displays in radius");
         player.sendMessage(ChatColor.YELLOW + " /bde clearcache" + ChatColor.GRAY + " - Clear model cache");
         player.sendMessage(ChatColor.DARK_GRAY + "────────────────────────────────");
     }
@@ -362,12 +417,13 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         switch (action) {
             case "spawn" -> {
                 if (args.length == 2) return Collections.singletonList("<model_id>");
+                if (args.length == 3) return Collections.singletonList("<name>");
             }
             case "remove", "info" -> {
                 if (args.length == 2) {
                     List<String> options = new ArrayList<>();
                     options.add("nearest");
-                    options.addAll(getGroupIdSuggestions());
+                    options.addAll(getGroupNameSuggestions());
                     return filterStartsWith(options, args[1]);
                 }
             }
@@ -376,7 +432,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                 if (args.length == 3) {
                     List<String> options = new ArrayList<>();
                     options.add("nearest");
-                    options.addAll(getGroupIdSuggestions());
+                    options.addAll(getGroupNameSuggestions());
                     return filterStartsWith(options, args[2]);
                 }
             }
@@ -390,7 +446,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                     } else if (args[1].equalsIgnoreCase("stop")) {
                         List<String> options = new ArrayList<>();
                         options.add("nearest");
-                        options.addAll(getGroupIdSuggestions());
+                        options.addAll(getGroupNameSuggestions());
                         return filterStartsWith(options, args[2]);
                     }
                 }
@@ -398,7 +454,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                     if (args[1].equalsIgnoreCase("play")) {
                         List<String> options = new ArrayList<>();
                         options.add("nearest");
-                        options.addAll(getGroupIdSuggestions());
+                        options.addAll(getGroupNameSuggestions());
                         return filterStartsWith(options, args[3]);
                     }
                 }
@@ -408,9 +464,12 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                 if (args.length == 3) {
                     List<String> options = new ArrayList<>();
                     options.add("nearest");
-                    options.addAll(getGroupIdSuggestions());
+                    options.addAll(getGroupNameSuggestions());
                     return filterStartsWith(options, args[2]);
                 }
+            }
+            case "purge" -> {
+                if (args.length == 2) return Arrays.asList("1", "2", "3", "5", "10");
             }
         }
 
@@ -418,6 +477,29 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
     }
 
     // ========== HELPERS ==========
+
+    /**
+     * Resolve a group by name or partial UUID.
+     * Priority: exact name match > partial UUID match.
+     */
+    private ModelGroup resolveGroup(String identifier) {
+        // Try exact name match first (case-insensitive)
+        ModelGroup byName = plugin.findGroupByName(identifier);
+        if (byName != null) return byName;
+
+        // Fallback: try partial UUID match
+        return findGroupByPartialId(identifier);
+    }
+
+    /**
+     * Resolve a group by name, partial UUID, or "nearest" keyword.
+     */
+    private ModelGroup resolveGroupOrNearest(String identifier, Player player) {
+        if (identifier.equalsIgnoreCase("nearest")) {
+            return getNearestGroup(player);
+        }
+        return resolveGroup(identifier);
+    }
 
     private ModelGroup getNearestGroup(Player player) {
         NamespacedKey groupKey = new NamespacedKey(plugin, "group_id");
@@ -452,9 +534,9 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         return null;
     }
 
-    private List<String> getGroupIdSuggestions() {
-        return plugin.getActiveGroups().entrySet().stream()
-                .map(e -> e.getKey().toString().substring(0, 8))
+    private List<String> getGroupNameSuggestions() {
+        return plugin.getActiveGroups().values().stream()
+                .map(ModelGroup::getDisplayName)
                 .collect(Collectors.toList());
     }
 
