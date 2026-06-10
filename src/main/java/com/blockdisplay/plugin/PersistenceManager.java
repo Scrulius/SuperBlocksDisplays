@@ -62,51 +62,82 @@ public class PersistenceManager {
 
         int loadedCount = 0;
         for (String uuidStr : section.getKeys(false)) {
-            UUID groupId = UUID.fromString(uuidStr);
-            String path = "groups." + uuidStr;
-            String modelId = config.getString(path + ".model");
-            String displayName = config.getString(path + ".name", "unnamed_" + uuidStr.substring(0, 6));
-            String worldName = config.getString(path + ".world");
-            World world = plugin.getServer().getWorld(worldName);
-
-            if (world == null) {
-                plugin.getLogger().warning("World '" + worldName + "' not found. Skipping model " + displayName);
-                continue;
+            try {
+                if (loadOne(uuidStr)) {
+                    loadedCount++;
+                }
+            } catch (Exception e) {
+                plugin.getLogger().warning("Skipping malformed saved model '" + uuidStr + "': " + e.getMessage());
             }
-
-            double x = config.getDouble(path + ".x");
-            double y = config.getDouble(path + ".y");
-            double z = config.getDouble(path + ".z");
-            float yaw = (float) config.getDouble(path + ".yaw");
-            boolean animating = config.getBoolean(path + ".animating", false);
-            boolean loopAnim = config.getBoolean(path + ".loopAnim", true);
-            float animSpeed = (float) config.getDouble(path + ".animSpeed", 1.0);
-
-            Location loc = new Location(world, x, y, z, yaw, 0);
-
-            plugin.getModelManager().fetchModel(modelId).thenAccept(modelData -> {
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    if (modelData != null) {
-                        ModelGroup group = new ModelGroup(loc, groupId, modelId, displayName);
-                        group.reconnectOrSpawn(modelData, plugin);
-                        group.setYaw(yaw);
-
-                        group.setLoopAnim(loopAnim);
-                        group.setAnimSpeed(animSpeed);
-                        // Auto-start animation if it was animating before and has animations
-                        if (animating && modelData.hasAnimations()) {
-                            group.setAnimating(true);
-                        }
-
-                        plugin.getActiveGroups().put(groupId, group);
-                        plugin.getLogger().info("Loaded model '" + displayName + "' (" + modelId + ")");
-                    } else {
-                        plugin.getLogger().warning("Could not reload model '" + displayName + "' (" + modelId + ") - may be expired on API.");
-                    }
-                });
-            });
-            loadedCount++;
         }
         plugin.getLogger().info("Loading " + loadedCount + " saved model(s)...");
+    }
+
+    /**
+     * @return true if the entry was scheduled to load, false if it was skipped (e.g. world missing).
+     */
+    private boolean loadOne(String uuidStr) {
+        UUID groupId = UUID.fromString(uuidStr);
+        String path = "groups." + uuidStr;
+        String modelId = config.getString(path + ".model");
+        String displayName = config.getString(path + ".name", "unnamed_" + uuidStr.substring(0, 6));
+        String worldName = config.getString(path + ".world");
+        World world = (worldName != null) ? plugin.getServer().getWorld(worldName) : null;
+
+        if (world == null) {
+            plugin.getLogger().warning("World '" + worldName + "' not found. Skipping model " + displayName);
+            return false;
+        }
+
+        double x = config.getDouble(path + ".x");
+        double y = config.getDouble(path + ".y");
+        double z = config.getDouble(path + ".z");
+        float yaw = (float) config.getDouble(path + ".yaw");
+        boolean animating = config.getBoolean(path + ".animating", false);
+        boolean loopAnim = config.getBoolean(path + ".loopAnim", true);
+        float animSpeed = (float) config.getDouble(path + ".animSpeed", 1.0);
+
+        Location loc = new Location(world, x, y, z, yaw, 0);
+
+        // 1) Authoritative: a local snapshot of the model data. No API, no name lookups.
+        ModelData snapshot = plugin.getModelManager().loadSpawnedData(groupId);
+        if (snapshot != null) {
+            plugin.getServer().getScheduler().runTask(plugin, () ->
+                    spawnLoaded(groupId, modelId, displayName, loc, yaw, animating, loopAnim, animSpeed, snapshot, false));
+            return true;
+        }
+
+        // 2) Legacy / migration fallback: no snapshot yet (saved by an older version).
+        //    Resolve from library name or API cache, then write a snapshot so the next restart is clean.
+        plugin.getModelManager().resolveModelData(modelId).thenAccept(modelData ->
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (modelData != null) {
+                        spawnLoaded(groupId, modelId, displayName, loc, yaw, animating, loopAnim, animSpeed, modelData, true);
+                    } else {
+                        plugin.getLogger().warning("Could not reload model '" + displayName + "' (" + modelId
+                                + ") - no local snapshot, and not found in library or API.");
+                    }
+                }));
+        return true;
+    }
+
+    private void spawnLoaded(UUID groupId, String modelId, String displayName, Location loc, float yaw,
+                             boolean animating, boolean loopAnim, float animSpeed,
+                             ModelData modelData, boolean snapshotAfter) {
+        ModelGroup group = new ModelGroup(loc, groupId, modelId, displayName);
+        group.reconnectOrSpawn(modelData, plugin);
+        group.setYaw(yaw);
+        group.setLoopAnim(loopAnim);
+        group.setAnimSpeed(animSpeed);
+        // Auto-start animation if it was animating before and has animations
+        if (animating && modelData.hasAnimations()) {
+            group.setAnimating(true);
+        }
+
+        plugin.getActiveGroups().put(groupId, group);
+        if (snapshotAfter) {
+            plugin.getModelManager().saveSpawnedData(groupId, modelData);
+        }
+        plugin.getLogger().info("Loaded model '" + displayName + "' (" + modelId + ")");
     }
 }

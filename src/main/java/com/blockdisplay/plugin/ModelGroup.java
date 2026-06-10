@@ -43,13 +43,34 @@ public class ModelGroup {
         this.origin = origin.clone();
     }
 
+    /**
+     * A scoreboard tag unique to this group, added to every spawned entity. Animation selectors
+     * are scoped with this tag so a model only ever moves its own parts - models authored with the
+     * same shared {@code bde_N} tags no longer fight over each other's entities when placed close
+     * together (the original {@code distance=..1} scoping breaks down within ~1 block).
+     */
+    public String getAnimTag() {
+        return "bdeg_" + groupId.toString().replace("-", "").substring(0, 12);
+    }
+
+    /** Tag a freshly spawned entity so both the cleanup sweep (PDC) and animations (tag) can find it. */
+    private void tagPart(Entity e, NamespacedKey groupKey) {
+        e.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
+        e.addScoreboardTag(getAnimTag());
+    }
+
     public void reconnectOrSpawn(ModelData modelData, BlockDisplayPlugin plugin) {
         this.modelData = modelData;
         NamespacedKey groupKey = new NamespacedKey(plugin, "group_id");
         World world = origin.getWorld();
         if (world == null) return;
 
-        // Remove any stale entities left over from a previous session (e.g. after crash)
+        // Remove any stale entities left over from a previous session (e.g. after crash).
+        // All parts are summoned exactly at the origin, so the sweep only finds them if the
+        // origin chunk is actually loaded - force-load it first so crash recovery doesn't duplicate.
+        if (!world.isChunkLoaded(origin.getBlockX() >> 4, origin.getBlockZ() >> 4)) {
+            world.getChunkAt(origin);
+        }
         int r = plugin.getCleanupRadius();
         for (Entity e : world.getNearbyEntities(origin, r, r, r)) {
             String idStr = e.getPersistentDataContainer().get(groupKey, PersistentDataType.STRING);
@@ -105,7 +126,7 @@ public class ModelGroup {
                     Bukkit.dispatchCommand(silentSender, cmd);
                     Entity spawnedPart = plugin.getServer().getEntity(partUuid);
                     if (spawnedPart != null) {
-                        spawnedPart.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
+                        tagPart(spawnedPart, groupKey);
                         parts.add(spawnedPart);
                     } else {
                         // Entity may not be registered yet; schedule a retry on the next tick
@@ -113,7 +134,7 @@ public class ModelGroup {
                         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
                             Entity retryPart = plugin.getServer().getEntity(retryUuid);
                             if (retryPart != null) {
-                                retryPart.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
+                                tagPart(retryPart, groupKey);
                                 parts.add(retryPart);
                             } else {
                                 plugin.getLogger().warning("Spawned part not found after retry: " + retryUuid);
@@ -147,14 +168,14 @@ public class ModelGroup {
                     Bukkit.dispatchCommand(silentSender, cmd);
                     Entity spawnedHitbox = plugin.getServer().getEntity(hitboxUuid);
                     if (spawnedHitbox != null) {
-                        spawnedHitbox.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
+                        tagPart(spawnedHitbox, groupKey);
                         parts.add(spawnedHitbox);
                     } else {
                         final UUID retryUuid = hitboxUuid;
                         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
                             Entity retryPart = plugin.getServer().getEntity(retryUuid);
                             if (retryPart != null) {
-                                retryPart.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
+                                tagPart(retryPart, groupKey);
                                 parts.add(retryPart);
                             }
                         }, 1L);

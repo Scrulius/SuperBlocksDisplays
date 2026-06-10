@@ -142,6 +142,8 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             group.setAnimSpeed(plugin.getDefaultAnimSpeed());
         }
 
+        // Snapshot the full model data locally so it re-spawns on restart without touching the API.
+        plugin.getModelManager().saveSpawnedData(group.getGroupId(), modelData);
         plugin.getPersistenceManager().saveGroup(group);
 
         player.sendMessage(PREFIX + ChatColor.GREEN + "Model " + ChatColor.WHITE + displayName
@@ -171,6 +173,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             target.remove(plugin);
             plugin.getAnimationManager().removeGroup(target.getGroupId());
             plugin.getActiveGroups().remove(target.getGroupId());
+            plugin.getModelManager().deleteSpawnedData(target.getGroupId());
             plugin.getPersistenceManager().removeGroup(target.getGroupId());
             player.sendMessage(PREFIX + ChatColor.GREEN + "Model '" + name + "' removed.");
         } else {

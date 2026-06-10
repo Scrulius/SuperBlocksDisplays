@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public class ModelManager {
@@ -21,6 +22,7 @@ public class ModelManager {
     private final Gson gson;
     private final BlockDisplayPlugin plugin;
     private final File libraryDir;
+    private final File spawnedDataDir;
 
     public ModelManager(BlockDisplayPlugin plugin) {
         this.plugin = plugin;
@@ -37,6 +39,61 @@ public class ModelManager {
         this.libraryDir = new File(plugin.getDataFolder(), "library");
         if (!libraryDir.exists()) {
             libraryDir.mkdirs();
+        }
+
+        // Per-group snapshots of the full model data, so re-spawning on restart
+        // never depends on the remote API or a name that happens to match the cache.
+        this.spawnedDataDir = new File(plugin.getDataFolder(), "data");
+        if (!spawnedDataDir.exists()) {
+            spawnedDataDir.mkdirs();
+        }
+    }
+
+    /**
+     * Resolve model data from any local source first (in-memory cache, library, API cache file),
+     * only hitting the remote API as a last resort. Works for both numeric API ids and library names.
+     */
+    public CompletableFuture<ModelData> resolveModelData(String source) {
+        ModelData fromLibrary = loadFromLibrary(source);
+        if (fromLibrary != null && fromLibrary.hasPassengers()) {
+            return CompletableFuture.completedFuture(fromLibrary);
+        }
+        return fetchModel(source);
+    }
+
+    // ---- Per-group spawned snapshots (authoritative, API-independent) ----
+
+    /**
+     * Write a full snapshot of a spawned model's data, keyed by its group id. This is what gets
+     * re-loaded on restart, so a model survives even if its API id expired or its library entry
+     * was deleted.
+     */
+    public void saveSpawnedData(UUID groupId, ModelData data) {
+        if (data == null || !data.hasPassengers()) return;
+        File file = new File(spawnedDataDir, groupId + ".json");
+        try (FileWriter writer = new FileWriter(file)) {
+            gson.toJson(data, writer);
+        } catch (Exception e) {
+            plugin.getLogger().warning("Could not snapshot model data for group " + groupId + ": " + e.getMessage());
+        }
+    }
+
+    public ModelData loadSpawnedData(UUID groupId) {
+        File file = new File(spawnedDataDir, groupId + ".json");
+        if (!file.exists()) return null;
+        try (FileReader reader = new FileReader(file)) {
+            ModelData data = gson.fromJson(reader, ModelData.class);
+            return (data != null && data.hasPassengers()) ? data : null;
+        } catch (Exception e) {
+            plugin.getLogger().warning("Could not read snapshot for group " + groupId + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    public void deleteSpawnedData(UUID groupId) {
+        File file = new File(spawnedDataDir, groupId + ".json");
+        if (file.exists()) {
+            file.delete();
         }
     }
 

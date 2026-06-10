@@ -54,7 +54,9 @@ public class BlockDisplayPlugin extends JavaPlugin {
         getCommand("bde").setExecutor(bdeCommand);
         getCommand("bde").setTabCompleter(bdeCommand);
 
-        getLogger().info("SuperBlocksDisplays enabled. " + activeGroups.size() + " models loaded.");
+        // Note: saved models load asynchronously, so they aren't counted here yet
+        // (PersistenceManager logs "Loading N saved model(s)..." and one line per model as they arrive).
+        getLogger().info("SuperBlocksDisplays enabled.");
     }
 
     private void loadConfigValues() {
