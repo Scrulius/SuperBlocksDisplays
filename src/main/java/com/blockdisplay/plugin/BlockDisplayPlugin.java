@@ -42,8 +42,9 @@ public class BlockDisplayPlugin extends JavaPlugin {
         this.modelManager = new ModelManager(this);
         this.persistenceManager = new PersistenceManager(this);
 
-        // Load saved groups
+        // Load saved groups, then GC any data/ snapshots that no longer belong to a saved group
         this.persistenceManager.loadSavedGroups();
+        this.modelManager.cleanupOrphanSnapshots(persistenceManager.getSavedGroupIds());
 
         // Start animation task (every tick)
         this.animationManager = new AnimationManager(this);
@@ -57,6 +58,11 @@ public class BlockDisplayPlugin extends JavaPlugin {
         // Note: saved models load asynchronously, so they aren't counted here yet
         // (PersistenceManager logs "Loading N saved model(s)..." and one line per model as they arrive).
         getLogger().info("SuperBlocksDisplays enabled.");
+    }
+
+    /** Re-read config.yml from disk and apply the new values (used by /bde reload). */
+    public void reloadPluginConfig() {
+        loadConfigValues();
     }
 
     private void loadConfigValues() {

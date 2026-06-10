@@ -2,22 +2,24 @@ package com.blockdisplay.plugin;
 
 import com.google.gson.Gson;
 import java.io.File;
-import java.io.FilenameFilter;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ModelManager {
-    private final Map<String, ModelData> cache = new HashMap<>();
+    // ConcurrentHashMap: populated from the HTTP client's worker thread, read from the main thread.
+    private final Map<String, ModelData> cache = new ConcurrentHashMap<>();
     private final HttpClient httpClient;
     private final Gson gson;
     private final BlockDisplayPlugin plugin;
@@ -28,6 +30,7 @@ public class ModelManager {
         this.plugin = plugin;
         this.httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_2)
+                .connectTimeout(Duration.ofSeconds(10))
                 .build();
         this.gson = new Gson();
 
@@ -71,11 +74,15 @@ public class ModelManager {
     public void saveSpawnedData(UUID groupId, ModelData data) {
         if (data == null || !data.hasPassengers()) return;
         File file = new File(spawnedDataDir, groupId + ".json");
-        try (FileWriter writer = new FileWriter(file)) {
-            gson.toJson(data, writer);
-        } catch (Exception e) {
-            plugin.getLogger().warning("Could not snapshot model data for group " + groupId + ": " + e.getMessage());
-        }
+        // ModelData is immutable after fetch and snapshots run to ~500 KB; serialize and write
+        // off the main thread so spawning never stalls a tick on disk I/O.
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            try (FileWriter writer = new FileWriter(file)) {
+                gson.toJson(data, writer);
+            } catch (Exception e) {
+                plugin.getLogger().warning("Could not snapshot model data for group " + groupId + ": " + e.getMessage());
+            }
+        });
     }
 
     public ModelData loadSpawnedData(UUID groupId) {
@@ -94,6 +101,25 @@ public class ModelManager {
         File file = new File(spawnedDataDir, groupId + ".json");
         if (file.exists()) {
             file.delete();
+        }
+    }
+
+    /**
+     * Delete snapshots whose group no longer exists in spawned.yml (e.g. files left behind by a
+     * crash between snapshot write and group save). Called once at startup so data/ can't grow forever.
+     */
+    public void cleanupOrphanSnapshots(Set<String> validGroupIds) {
+        File[] files = spawnedDataDir.listFiles((dir, name) -> name.endsWith(".json"));
+        if (files == null) return;
+        int removed = 0;
+        for (File f : files) {
+            String id = f.getName().substring(0, f.getName().length() - 5);
+            if (!validGroupIds.contains(id) && f.delete()) {
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            plugin.getLogger().info("Cleaned up " + removed + " orphaned model snapshot(s).");
         }
     }
 
@@ -118,13 +144,19 @@ public class ModelManager {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("https://block-display.com/server-api/?id=" + modelId))
+                .timeout(Duration.ofSeconds(30))
                 .GET()
                 .build();
 
         return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenApply(HttpResponse::body)
-                .thenApply(body -> {
+                .thenApply(response -> {
                     try {
+                        if (response.statusCode() != 200) {
+                            plugin.getLogger().warning("API returned HTTP " + response.statusCode() + " for model " + modelId);
+                            return null;
+                        }
+                        String body = response.body();
+
                         // Check for error response
                         if (body.contains("\"error\"")) {
                             plugin.getLogger().warning("API error for model " + modelId + ": " + body.trim());
@@ -148,6 +180,14 @@ public class ModelManager {
                         plugin.getLogger().severe("Error parsing JSON for model " + modelId + ": " + e.getMessage());
                         return null;
                     }
+                })
+                // Without this, a network failure (no internet, timeout, DNS) completes the future
+                // exceptionally and the caller's thenAccept NEVER runs - the player would get no
+                // feedback at all. Map every failure to null so callers always hear back.
+                .exceptionally(ex -> {
+                    Throwable cause = (ex.getCause() != null) ? ex.getCause() : ex;
+                    plugin.getLogger().warning("Could not reach block-display.com for model " + modelId + ": " + cause.getMessage());
+                    return null;
                 });
     }
 

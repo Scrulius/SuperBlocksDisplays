@@ -42,7 +42,9 @@ If the model has animations, they start playing automatically in loop mode.
 
 **`/bde info [name]`** — Detailed view of a single model: location, world, part count, rotation, animation state, speed, and Minecraft version.
 
-**`/bde purge <1-10>`** — Emergency cleanup. Kills every `block_display`, `item_display` and `text_display` entity within the given radius from your position, regardless of whether it belongs to a managed model or not. Radius is capped at 10 to prevent accidents.
+**`/bde purge <1-10>`** — Emergency cleanup. Kills every `block_display`, `item_display`, `text_display` and `interaction` entity (model hitboxes) within the given radius from your position, regardless of whether it belongs to a managed model or not. Radius is capped at 10 to prevent accidents.
+
+**`/bde reload`** — Re-reads `config.yml` from disk and applies the new values without a restart.
 
 ### Animation
 
@@ -123,7 +125,8 @@ Allowed range for the `/bde speed` command. Requests outside this range are reje
 - A Log4j2 filter is registered on the root logger to catch any remaining messages like "Modified entity data", "Summoned new", and "No entity was found" (relevant during spawning and fallback dispatch only).
 - Entity registration after spawning is not instant. The plugin waits 1 tick to tag entities via PersistentDataContainer, and 3 ticks before marking a model as ready for animation.
 - On shutdown, all managed entities are removed from the world. On startup, any leftover entities from a previous crash are cleaned up before re-spawning. Because all parts are summoned exactly at the model's origin, the cleanup sweep force-loads the origin chunk first so crash-leftover entities are actually found and removed (otherwise they could be duplicated).
-- Each spawned model is re-loaded from its local `data/<group-id>.json` snapshot rather than re-fetched from the API, so models never silently disappear after a restart.
+- Each spawned model is re-loaded from its local `data/<group-id>.json` snapshot rather than re-fetched from the API, so models never silently disappear after a restart. Snapshots are written off the main thread, and orphaned snapshot files are garbage-collected at startup.
+- API calls carry connect (10s) and request (30s) timeouts, and every failure path — network down, HTTP error, bad JSON — resolves to a clear player-facing error instead of silently never answering.
 
 ## License
 

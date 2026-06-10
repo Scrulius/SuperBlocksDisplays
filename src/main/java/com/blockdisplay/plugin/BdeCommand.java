@@ -13,6 +13,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.persistence.PersistentDataType;
 import org.jetbrains.annotations.NotNull;
@@ -37,7 +38,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> SUBCOMMANDS = Arrays.asList(
             "spawn", "remove", "tp", "move", "purge", "list", "rotate", "anim", "speed", "info",
-            "download", "library", "undownload", "clearcache", "help"
+            "download", "library", "undownload", "clearcache", "reload", "help"
     );
 
     private static final List<String> MOVE_DIRECTIONS = Arrays.asList(
@@ -77,6 +78,10 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             case "library" -> handleLibrary(player);
             case "undownload" -> handleUndownload(player, args);
             case "clearcache" -> handleClearCache(player);
+            case "reload" -> {
+                plugin.reloadPluginConfig();
+                player.sendMessage(PREFIX + ChatColor.GREEN + "Configuration reloaded.");
+            }
             case "help" -> sendHelp(player);
             default -> player.sendMessage(PREFIX + ChatColor.RED + "Unknown command. Use /bde help");
         }
@@ -495,7 +500,9 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
 
         int removed = 0;
         for (Entity entity : player.getNearbyEntities(radius, radius, radius)) {
-            if (entity instanceof Display) {
+            // Interaction covers model hitboxes, which aren't Display entities and would
+            // otherwise survive a purge as invisible orphans.
+            if (entity instanceof Display || entity instanceof Interaction) {
                 entity.remove();
                 removed++;
             }
@@ -605,6 +612,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + " /bde library" + ChatColor.GRAY + " - List saved models");
         player.sendMessage(ChatColor.YELLOW + " /bde undownload <name>" + ChatColor.GRAY + " - Remove from library");
         player.sendMessage(ChatColor.YELLOW + " /bde clearcache" + ChatColor.GRAY + " - Clear API cache");
+        player.sendMessage(ChatColor.YELLOW + " /bde reload" + ChatColor.GRAY + " - Reload config.yml");
         player.sendMessage(ChatColor.DARK_GRAY + "────────────────────────────────");
     }
 

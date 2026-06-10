@@ -56,6 +56,12 @@ public class PersistenceManager {
         }
     }
 
+    /** Group ids currently present in spawned.yml (used to GC orphaned data/ snapshots at startup). */
+    public java.util.Set<String> getSavedGroupIds() {
+        ConfigurationSection section = config.getConfigurationSection("groups");
+        return (section == null) ? java.util.Set.of() : section.getKeys(false);
+    }
+
     public void loadSavedGroups() {
         ConfigurationSection section = config.getConfigurationSection("groups");
         if (section == null) return;

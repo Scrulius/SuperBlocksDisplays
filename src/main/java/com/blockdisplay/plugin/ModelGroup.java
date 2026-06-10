@@ -73,6 +73,15 @@ public class ModelGroup {
                 partsByTag.computeIfAbsent(tag, k -> new ArrayList<>()).add(e.getUniqueId());
             }
         }
+        // Late-registered parts (next-tick retry) must catch up with a rotation that was applied
+        // while they weren't tracked yet - otherwise a rotated model loads with one part askew.
+        if (yawOffset != 0) {
+            Location loc = e.getLocation();
+            if (loc.getYaw() != yawOffset) {
+                loc.setYaw(yawOffset);
+                e.teleport(loc);
+            }
+        }
     }
 
     /** Run an action on every part that currently resolves to a live entity. */
