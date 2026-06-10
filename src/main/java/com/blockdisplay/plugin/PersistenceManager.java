@@ -124,7 +124,18 @@ public class PersistenceManager {
     private void spawnLoaded(UUID groupId, String modelId, String displayName, Location loc, float yaw,
                              boolean animating, boolean loopAnim, float animSpeed,
                              ModelData modelData, boolean snapshotAfter) {
-        ModelGroup group = new ModelGroup(loc, groupId, modelId, displayName);
+        // Names must be unique among active models (commands resolve by name); old saves may
+        // contain duplicates, so de-dup on load and persist the corrected name.
+        String finalName = displayName;
+        int n = 2;
+        while (plugin.findGroupByName(finalName) != null) {
+            finalName = displayName + "_" + n++;
+        }
+        if (!finalName.equals(displayName)) {
+            plugin.getLogger().warning("Duplicate model name '" + displayName + "' in spawned.yml; renamed to '" + finalName + "'.");
+        }
+
+        ModelGroup group = new ModelGroup(loc, groupId, modelId, finalName);
         group.reconnectOrSpawn(modelData, plugin);
         group.setYaw(yaw);
         group.setLoopAnim(loopAnim);
@@ -138,6 +149,9 @@ public class PersistenceManager {
         if (snapshotAfter) {
             plugin.getModelManager().saveSpawnedData(groupId, modelData);
         }
-        plugin.getLogger().info("Loaded model '" + displayName + "' (" + modelId + ")");
+        if (!finalName.equals(displayName)) {
+            saveGroup(group);
+        }
+        plugin.getLogger().info("Loaded model '" + finalName + "' (" + modelId + ")");
     }
 }

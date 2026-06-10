@@ -3,7 +3,12 @@ package com.blockdisplay.plugin;
 import org.bukkit.Bukkit;
 import org.bukkit.GameRule;
 import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.joml.Matrix4f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -12,15 +17,25 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Handles animation playback for all active model groups.
- * Supports per-group speed control via a float accumulator.
  *
- * <p>Hot path (runs every tick), so per-group keyframe data is compiled once into ready-to-dispatch
- * commands and cached: the model's origin, dimension and per-group scoping tag are baked in, so no
- * string formatting happens per tick. Commands are batched per world and the command-feedback
- * gamerules are toggled at most once per world per tick instead of once per model per frame.
+ * <p>Keyframes from block-display.com are {@code data merge entity @e[tag=bde_N,...]} commands.
+ * Instead of dispatching them (which needs gamerule juggling, a silent sender and a Log4j filter
+ * to stay quiet), each model's keyframes are compiled ONCE into native Paper Display API calls:
+ * the {@code bde_N} selector tag resolves to concrete part UUIDs at compile time, and per tick we
+ * just call {@link Display#setTransformationMatrix}, {@link Display#setInterpolationDuration},
+ * {@link Display#setInterpolationDelay} and {@link BlockDisplay#setBlock} on them. This is exactly
+ * what a datapack's function context achieves (functions run with feedback suppressed natively) —
+ * zero commands, zero gamerule toggles, zero log spam on the hot path.
+ *
+ * <p>Commands the API cannot express without NMS (e.g. a keyframe swapping an item_display's
+ * {@code item:}, or non-merge commands like playsound) fall back to batched dispatch through the
+ * old silent-sender path. In practice block-display.com models animate only transformation,
+ * interpolation and block_state, so the fallback list is empty.
  */
 public class AnimationManager extends BukkitRunnable {
 
@@ -29,25 +44,31 @@ public class AnimationManager extends BukkitRunnable {
     private final Map<UUID, Float> accumulators = new ConcurrentHashMap<>();
     private final Map<UUID, CompiledAnim> compiledCache = new ConcurrentHashMap<>();
 
+    // "data merge entity @e[type=block_display,tag=bde_0,distance=..1,limit=1,sort=nearest] {...}"
+    private static final Pattern DATA_MERGE = Pattern.compile("^data merge entity @e\\[([^\\]]*)\\]\\s*(\\{.*)$");
+    private static final Pattern TAG_IN_SELECTOR = Pattern.compile("tag=([^,\\]]+)");
+    private static final Pattern TRANSFORMATION = Pattern.compile("transformation:\\[([^\\]]*)\\]");
+    private static final Pattern INTERP_DURATION = Pattern.compile("interpolation_duration:(-?\\d+)");
+    private static final Pattern START_INTERP = Pattern.compile("start_interpolation:(-?\\d+)");
+    private static final Pattern BLOCK_STATE = Pattern.compile("block_state:\\{Name:\"([^\"]+)\"(?:,Properties:\\{([^}]*)\\})?\\}");
+    private static final Pattern PROPERTY = Pattern.compile("([A-Za-z0-9_]+):\"([^\"]*)\"");
+
     public AnimationManager(BlockDisplayPlugin plugin) {
         this.plugin = plugin;
     }
 
-    /** A model's "default" animation, pre-baked into dispatch-ready commands keyed by tick. */
-    private static final class CompiledAnim {
-        final int maxTick;
-        final Map<Integer, List<String>> framesByTick;
+    /** One keyframe command compiled to direct API calls on its target parts. Null fields = field not present in the merge. */
+    private record FrameAction(List<UUID> targets, Matrix4f matrix, Integer interpDuration, Integer interpDelay, BlockData block) {}
 
-        CompiledAnim(int maxTick, Map<Integer, List<String>> framesByTick) {
-            this.maxTick = maxTick;
-            this.framesByTick = framesByTick;
-        }
-    }
+    /** All work for one animation tick: native actions plus any commands we could not translate. */
+    private record Frame(List<FrameAction> actions, List<String> fallbackCommands) {}
+
+    private record CompiledAnim(int maxTick, Map<Integer, Frame> frames) {}
 
     @Override
     public void run() {
-        // Collect every command to run this tick, grouped by world, so we toggle gamerules once per world.
-        Map<World, List<String>> batched = null;
+        // Untranslatable commands collected for this tick, grouped by world (gamerules toggled once per world).
+        Map<World, List<String>> fallbackBatch = null;
 
         for (Map.Entry<UUID, ModelGroup> entry : plugin.getActiveGroups().entrySet()) {
             ModelGroup group = entry.getValue();
@@ -65,7 +86,7 @@ public class AnimationManager extends BukkitRunnable {
 
             UUID gid = group.getGroupId();
             CompiledAnim compiled = compiledCache.computeIfAbsent(gid, k -> compile(group, anim));
-            int maxTick = compiled.maxTick;
+            int maxTick = compiled.maxTick();
             if (maxTick == 0) continue;
 
             float speed = group.getAnimSpeed();
@@ -78,10 +99,13 @@ public class AnimationManager extends BukkitRunnable {
             for (int i = 0; i < framesToAdvance; i++) {
                 int currentAnimTick = tick % (maxTick + 1);
 
-                List<String> frame = compiled.framesByTick.get(currentAnimTick);
-                if (frame != null && !frame.isEmpty()) {
-                    if (batched == null) batched = new HashMap<>();
-                    batched.computeIfAbsent(world, w -> new ArrayList<>()).addAll(frame);
+                Frame frame = compiled.frames().get(currentAnimTick);
+                if (frame != null) {
+                    applyFrame(frame);
+                    if (!frame.fallbackCommands().isEmpty()) {
+                        if (fallbackBatch == null) fallbackBatch = new HashMap<>();
+                        fallbackBatch.computeIfAbsent(world, w -> new ArrayList<>()).addAll(frame.fallbackCommands());
+                    }
                 }
                 tick++;
 
@@ -101,28 +125,35 @@ public class AnimationManager extends BukkitRunnable {
             }
         }
 
-        if (batched != null) {
-            for (Map.Entry<World, List<String>> e : batched.entrySet()) {
+        if (fallbackBatch != null) {
+            for (Map.Entry<World, List<String>> e : fallbackBatch.entrySet()) {
                 dispatchBatch(e.getKey(), e.getValue());
             }
         }
     }
 
+    /** Apply one frame's native actions to whatever parts currently resolve to live Display entities. */
+    private void applyFrame(Frame frame) {
+        for (FrameAction a : frame.actions()) {
+            for (UUID id : a.targets()) {
+                Entity e = Bukkit.getEntity(id);
+                if (!(e instanceof Display d) || !d.isValid()) continue;
+                if (a.interpDelay() != null) d.setInterpolationDelay(a.interpDelay());
+                if (a.interpDuration() != null) d.setInterpolationDuration(a.interpDuration());
+                if (a.matrix() != null) d.setTransformationMatrix(a.matrix());
+                if (a.block() != null && d instanceof BlockDisplay bd) bd.setBlock(a.block());
+            }
+        }
+    }
+
     /**
-     * Bake a model's keyframes into dispatch-ready commands. Each command gets this group's unique
-     * scoping tag injected into every entity selector and is wrapped in the {@code execute in ...
-     * positioned ...} prefix using the (immutable) model origin. Done once per group, then cached.
+     * Bake a model's keyframes. Each {@code data merge} we fully understand becomes a
+     * {@link FrameAction} with its targets pre-resolved from the group's tag->UUID map;
+     * anything else is wrapped for command dispatch (scoped to this group, origin baked in).
      */
     private CompiledAnim compile(ModelGroup group, Map<String, List<String>> anim) {
-        String groupTag = group.getAnimTag();
-        World world = group.getOrigin().getWorld();
-        String dimension = world.getKey().toString();
-        double x = group.getOrigin().getX();
-        double y = group.getOrigin().getY();
-        double z = group.getOrigin().getZ();
-
         int maxTick = 0;
-        Map<Integer, List<String>> framesByTick = new HashMap<>();
+        Map<Integer, Frame> frames = new HashMap<>();
 
         for (Map.Entry<String, List<String>> e : anim.entrySet()) {
             int t;
@@ -133,18 +164,119 @@ public class AnimationManager extends BukkitRunnable {
             }
             if (t > maxTick) maxTick = t;
 
-            List<String> baked = new ArrayList<>(e.getValue().size());
+            List<FrameAction> actions = new ArrayList<>();
+            List<String> fallback = new ArrayList<>();
             for (String cmd : e.getValue()) {
-                // Scope every entity selector to this group so it only touches its own parts.
-                String scoped = cmd.replace("@e[", "@e[tag=" + groupTag + ",");
-                baked.add(String.format(Locale.US,
-                        "execute in %s positioned %f %f %f run %s",
-                        dimension, x, y, z, scoped));
+                FrameAction action = tryParse(cmd, group.getPartsByTag());
+                if (action != null) {
+                    if (!action.targets().isEmpty()) {
+                        actions.add(action);
+                    }
+                    // Selector tag matches no known part: vanilla would no-op too, drop it.
+                } else {
+                    fallback.add(bakeFallback(group, cmd));
+                }
             }
-            framesByTick.put(t, baked);
+            frames.put(t, new Frame(List.copyOf(actions), List.copyOf(fallback)));
         }
 
-        return new CompiledAnim(maxTick, framesByTick);
+        return new CompiledAnim(maxTick, frames);
+    }
+
+    /**
+     * Translate one {@code data merge entity} command into API calls, or return null to use the
+     * command fallback. Strict by design: if the payload contains anything we did not parse
+     * (unknown keys, item: swaps), we refuse and let the real command apply it — never silently
+     * drop part of a keyframe.
+     */
+    private FrameAction tryParse(String cmd, Map<String, List<UUID>> partsByTag) {
+        Matcher m = DATA_MERGE.matcher(cmd);
+        if (!m.matches()) return null;
+        String selector = m.group(1);
+        String payload = m.group(2);
+
+        Matcher tagM = TAG_IN_SELECTOR.matcher(selector);
+        if (!tagM.find()) return null;
+        List<UUID> targets = partsByTag.get(tagM.group(1));
+
+        String residue = payload;
+
+        Matrix4f matrix = null;
+        Matcher tm = TRANSFORMATION.matcher(payload);
+        if (tm.find()) {
+            String[] raw = tm.group(1).split(",");
+            if (raw.length != 16) return null;
+            float[] vals = new float[16];
+            try {
+                for (int i = 0; i < 16; i++) {
+                    String s = raw[i].trim();
+                    if (s.endsWith("f") || s.endsWith("F")) s = s.substring(0, s.length() - 1);
+                    vals[i] = Float.parseFloat(s);
+                }
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+            // MC stores the matrix row-major; JOML's set(float[]) reads column-major -> transpose.
+            // (If models ever render warped, this transpose is the knob to revisit.)
+            matrix = new Matrix4f().set(vals).transpose();
+            residue = residue.replace(tm.group(0), "");
+        }
+
+        Integer duration = null;
+        Matcher dm = INTERP_DURATION.matcher(payload);
+        if (dm.find()) {
+            duration = Integer.parseInt(dm.group(1));
+            residue = residue.replace(dm.group(0), "");
+        }
+
+        Integer delay = null;
+        Matcher sm = START_INTERP.matcher(payload);
+        if (sm.find()) {
+            delay = Integer.parseInt(sm.group(1));
+            residue = residue.replace(sm.group(0), "");
+        }
+
+        BlockData block = null;
+        Matcher bm = BLOCK_STATE.matcher(payload);
+        if (bm.find()) {
+            StringBuilder bd = new StringBuilder(bm.group(1));
+            String props = bm.group(2);
+            if (props != null && !props.isEmpty()) {
+                bd.append('[');
+                Matcher pm = PROPERTY.matcher(props);
+                boolean first = true;
+                while (pm.find()) {
+                    if (!first) bd.append(',');
+                    bd.append(pm.group(1)).append('=').append(pm.group(2));
+                    first = false;
+                }
+                bd.append(']');
+            }
+            try {
+                block = Bukkit.createBlockData(bd.toString().toLowerCase(Locale.ROOT));
+            } catch (IllegalArgumentException ex) {
+                return null;
+            }
+            residue = residue.replace(bm.group(0), "");
+        }
+
+        if (matrix == null && duration == null && delay == null && block == null) return null;
+
+        // Anything left beyond braces/commas means the merge carries data we can't map -> fallback.
+        if (!residue.replaceAll("[{}\\s,]", "").isEmpty()) return null;
+
+        return new FrameAction(targets == null ? List.of() : List.copyOf(targets), matrix, duration, delay, block);
+    }
+
+    /** Wrap an untranslatable command the old way: group-scoped selector + origin/dimension prefix. */
+    private String bakeFallback(ModelGroup group, String cmd) {
+        World world = group.getOrigin().getWorld();
+        String scoped = cmd.replace("@e[", "@e[tag=" + group.getAnimTag() + ",");
+        return String.format(Locale.US,
+                "execute in %s positioned %f %f %f run %s",
+                world.getKey().toString(),
+                group.getOrigin().getX(), group.getOrigin().getY(), group.getOrigin().getZ(),
+                scoped);
     }
 
     private void dispatchBatch(World world, List<String> commands) {
@@ -171,6 +303,11 @@ public class AnimationManager extends BukkitRunnable {
     public void resetTick(UUID groupId) {
         tickCounters.remove(groupId);
         accumulators.remove(groupId);
+    }
+
+    /** Drop the compiled keyframes for a group (e.g. after /bde move changes the baked fallback origin). */
+    public void invalidateCompiled(UUID groupId) {
+        compiledCache.remove(groupId);
     }
 
     public void removeGroup(UUID groupId) {

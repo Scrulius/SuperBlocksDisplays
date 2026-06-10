@@ -36,6 +36,8 @@ If the model has animations, they start playing automatically in loop mode.
 
 **`/bde tp [name]`** — Teleports you to a model's spawn point. Keeps your current look direction.
 
+**`/bde move <direction> <distance> [name]`** — Nudges a model with precision. Directions: `up`, `down`, `north`, `south`, `east`, `west`, plus player-relative `left`, `right`, `forward`, `back` (snapped to the nearest cardinal so repeated nudges stay on-grid). Distance accepts decimals — `/bde move up 0.1` raises the model a tenth of a block. Works while an animation is playing (transformations are relative to each entity, so playback is unaffected), and the new position is saved immediately.
+
 **`/bde list`** — Shows all active models with their name, model ID, coordinates, part count, and animation status. Each entry is clickable to view details.
 
 **`/bde info [name]`** — Detailed view of a single model: location, world, part count, rotation, animation state, speed, and Minecraft version.
@@ -44,9 +46,9 @@ If the model has animations, they start playing automatically in loop mode.
 
 ### Animation
 
-Models from block-display.com can include keyframe animations stored in their datapack data. The plugin plays these by dispatching the keyframe commands every server tick.
+Models from block-display.com can include keyframe animations stored in their datapack data (`data merge entity` commands). The plugin does **not** dispatch these as commands: each model's keyframes are compiled once into direct Paper Display API calls — the `bde_N` selector tag is resolved to concrete entity UUIDs at compile time, and per tick the engine just calls `setTransformationMatrix`, `setInterpolationDuration`, `setInterpolationDelay` and `setBlock` on its own parts. This is what a datapack's function context achieves natively (functions run with feedback suppressed), so no gamerule juggling or log filtering is needed during playback, and two models placed within ~1 block of each other can never fight over each other's parts (UUID targeting replaces the fragile `distance=..1` selector scoping).
 
-Each model's keyframes are compiled once into ready-to-dispatch commands (origin, dimension and a per-model scoping tag baked in) and cached, so no string building happens on the per-tick hot path. Because block-display.com authors every model with the same shared `bde_N` entity tags, each spawned model also gets a unique scoreboard tag injected into its animation selectors — so two models placed within ~1 block of each other no longer fight over each other's parts (the original `distance=..1` scoping alone could not separate them).
+If a keyframe ever carries data the API cannot express without server internals (e.g. swapping an `item_display`'s item mid-animation, or a non-merge command like `playsound`), that command falls back to batched silent dispatch — never partially applied. In practice block-display.com models animate only transformation, interpolation and block_state, so the fallback path stays empty.
 
 **`/bde anim play <loop|once> [name]`** — Starts playback. In `loop` mode the animation repeats indefinitely. In `once` mode it plays through and stops at the last frame.
 
@@ -115,9 +117,10 @@ Allowed range for the `/bde speed` command. Requests outside this range are reje
 
 ## Technical details
 
-- Models are spawned using `Bukkit.dispatchCommand` with a custom `SilentCommandSender` that discards all output, preventing console spam.
-- The `SEND_COMMAND_FEEDBACK` and `LOG_ADMIN_COMMANDS` gamerules are temporarily disabled during command execution to prevent in-game spam to operators. During animation these are toggled at most once per world per tick (commands are batched), not once per model per frame, and restored immediately after — so an OP's own command feedback between ticks is unaffected.
-- A Log4j2 filter is registered on the root logger to catch any remaining messages like "Modified entity data", "Summoned new", and "No entity was found".
+- Models are spawned using `Bukkit.dispatchCommand` with a custom `SilentCommandSender` that discards all output, preventing console spam. Spawning is the only place commands (and the brief `SEND_COMMAND_FEEDBACK`/`LOG_ADMIN_COMMANDS` gamerule toggle) are still used — it happens once per model, not on the per-tick path.
+- Animation playback is pure Paper API (`Display#setTransformationMatrix` and friends, targeted by UUID); no commands, no gamerule toggling, no log output. Minecraft stores transformation matrices row-major while JOML reads column-major, so compiled matrices are transposed on load.
+- Parts are tracked by UUID rather than `Entity` references, so chunk unload/reload never leaves the plugin holding stale handles — every operation (move, rotate, remove, animate) resolves live entities via `Bukkit.getEntity`.
+- A Log4j2 filter is registered on the root logger to catch any remaining messages like "Modified entity data", "Summoned new", and "No entity was found" (relevant during spawning and fallback dispatch only).
 - Entity registration after spawning is not instant. The plugin waits 1 tick to tag entities via PersistentDataContainer, and 3 ticks before marking a model as ready for animation.
 - On shutdown, all managed entities are removed from the world. On startup, any leftover entities from a previous crash are cleaned up before re-spawning. Because all parts are summoned exactly at the model's origin, the cleanup sweep force-loads the origin chunk first so crash-leftover entities are actually found and removed (otherwise they could be duplicated).
 - Each spawned model is re-loaded from its local `data/<group-id>.json` snapshot rather than re-fetched from the API, so models never silently disappear after a restart.

@@ -36,8 +36,12 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
     private static final Pattern NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]{2,32}$");
 
     private static final List<String> SUBCOMMANDS = Arrays.asList(
-            "spawn", "remove", "tp", "purge", "list", "rotate", "anim", "speed", "info",
+            "spawn", "remove", "tp", "move", "purge", "list", "rotate", "anim", "speed", "info",
             "download", "library", "undownload", "clearcache", "help"
+    );
+
+    private static final List<String> MOVE_DIRECTIONS = Arrays.asList(
+            "up", "down", "north", "south", "east", "west", "left", "right", "forward", "back"
     );
 
     public BdeCommand(BlockDisplayPlugin plugin) {
@@ -62,6 +66,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             case "spawn" -> handleSpawn(player, args);
             case "remove" -> handleRemove(player, args);
             case "tp" -> handleTp(player, args);
+            case "move" -> handleMove(player, args);
             case "list" -> handleList(player);
             case "rotate" -> handleRotate(player, args);
             case "anim" -> handleAnim(player, args);
@@ -195,6 +200,77 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         loc.setPitch(player.getLocation().getPitch());
         player.teleport(loc);
         player.sendMessage(PREFIX + ChatColor.GREEN + "Teleported to '" + ChatColor.WHITE + target.getDisplayName() + ChatColor.GREEN + "'.");
+    }
+
+    // ========== MOVE ==========
+    private void handleMove(Player player, String[] args) {
+        if (args.length < 3) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde move <up|down|north|south|east|west|left|right|forward|back> <distance> [name|nearest]");
+            player.sendMessage(PREFIX + ChatColor.GRAY + "Distance accepts decimals, e.g. 0.1 for fine adjustments.");
+            return;
+        }
+
+        String dir = args[1].toLowerCase();
+        if (!MOVE_DIRECTIONS.contains(dir)) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Unknown direction '" + args[1] + "'. Use: " + String.join(", ", MOVE_DIRECTIONS));
+            return;
+        }
+
+        double amount;
+        try {
+            amount = Double.parseDouble(args[2]);
+        } catch (NumberFormatException e) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Invalid distance. Use a number, e.g. 0.5");
+            return;
+        }
+        if (!(amount > 0) || amount > 100) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Distance must be greater than 0 and at most 100.");
+            return;
+        }
+
+        ModelGroup target = (args.length >= 4) ? resolveGroupOrNearest(args[3], player) : getNearestGroup(player);
+        if (target == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "No model found. Specify a name or stand near a model.");
+            return;
+        }
+
+        double dx = 0, dy = 0, dz = 0;
+        switch (dir) {
+            case "up" -> dy = amount;
+            case "down" -> dy = -amount;
+            case "north" -> dz = -amount;
+            case "south" -> dz = amount;
+            case "east" -> dx = amount;
+            case "west" -> dx = -amount;
+            default -> {
+                // Player-relative, snapped to the nearest cardinal so repeated nudges stay on-grid.
+                double rad = Math.toRadians(player.getLocation().getYaw());
+                double fx = -Math.sin(rad), fz = Math.cos(rad);
+                if (Math.abs(fx) >= Math.abs(fz)) {
+                    fx = Math.signum(fx);
+                    fz = 0;
+                } else {
+                    fz = Math.signum(fz);
+                    fx = 0;
+                }
+                switch (dir) {
+                    case "forward" -> { dx = fx * amount; dz = fz * amount; }
+                    case "back" -> { dx = -fx * amount; dz = -fz * amount; }
+                    case "right" -> { dx = -fz * amount; dz = fx * amount; }
+                    case "left" -> { dx = fz * amount; dz = -fx * amount; }
+                }
+            }
+        }
+
+        target.move(dx, dy, dz);
+        // Compiled fallback commands bake the origin in; recompile if this model ever uses them.
+        plugin.getAnimationManager().invalidateCompiled(target.getGroupId());
+        plugin.getPersistenceManager().saveGroup(target);
+
+        Location o = target.getOrigin();
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Model '" + ChatColor.WHITE + target.getDisplayName()
+                + ChatColor.GREEN + "' moved " + ChatColor.WHITE + dir + " " + amount
+                + ChatColor.GRAY + String.format(" (now at %.2f, %.2f, %.2f)", o.getX(), o.getY(), o.getZ()));
     }
 
     // ========== LIST ==========
@@ -515,6 +591,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + " /bde spawn <id|lib> <name>" + ChatColor.GRAY + " - Spawn a model");
         player.sendMessage(ChatColor.YELLOW + " /bde remove [name|nearest]" + ChatColor.GRAY + " - Remove model");
         player.sendMessage(ChatColor.YELLOW + " /bde tp [name|nearest]" + ChatColor.GRAY + " - Teleport to model");
+        player.sendMessage(ChatColor.YELLOW + " /bde move <dir> <dist> [name]" + ChatColor.GRAY + " - Nudge model precisely");
         player.sendMessage(ChatColor.YELLOW + " /bde list" + ChatColor.GRAY + " - List all active models");
         player.sendMessage(ChatColor.YELLOW + " /bde rotate <yaw> [name|nearest]" + ChatColor.GRAY + " - Rotate a model");
         player.sendMessage(ChatColor.YELLOW + " /bde anim play <loop|once> [name]" + ChatColor.GRAY + " - Play animation");
@@ -548,6 +625,16 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                     options.add("nearest");
                     options.addAll(getGroupNameSuggestions());
                     return filterStartsWith(options, args[1]);
+                }
+            }
+            case "move" -> {
+                if (args.length == 2) return filterStartsWith(MOVE_DIRECTIONS, args[1]);
+                if (args.length == 3) return Arrays.asList("0.1", "0.25", "0.5", "1", "2", "5");
+                if (args.length == 4) {
+                    List<String> options = new ArrayList<>();
+                    options.add("nearest");
+                    options.addAll(getGroupNameSuggestions());
+                    return filterStartsWith(options, args[3]);
                 }
             }
             case "rotate" -> {

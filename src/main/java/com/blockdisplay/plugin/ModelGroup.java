@@ -9,9 +9,12 @@ import org.bukkit.entity.Entity;
 import org.bukkit.persistence.PersistentDataType;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -19,7 +22,12 @@ public class ModelGroup {
     private final UUID groupId;
     private final String modelId;
     private final String displayName;
-    private final List<Entity> parts;
+    // Parts are tracked by UUID, not Entity reference: Entity objects go stale when their chunk
+    // unloads/reloads, while a UUID always resolves to the live instance via Bukkit.getEntity().
+    private final List<UUID> partIds = new ArrayList<>();
+    // Author-assigned scoreboard tags (bde_0, bde_1, ...) -> part UUIDs. This is what lets the
+    // animation engine target parts directly through the API instead of @e[tag=...] selectors.
+    private final Map<String, List<UUID>> partsByTag = new HashMap<>();
     private Location origin;
     private float yawOffset = 0;
     private ModelData modelData;
@@ -39,24 +47,42 @@ public class ModelGroup {
         this.groupId = groupId;
         this.modelId = modelId;
         this.displayName = displayName;
-        this.parts = new ArrayList<>();
         this.origin = origin.clone();
     }
 
     /**
-     * A scoreboard tag unique to this group, added to every spawned entity. Animation selectors
-     * are scoped with this tag so a model only ever moves its own parts - models authored with the
-     * same shared {@code bde_N} tags no longer fight over each other's entities when placed close
-     * together (the original {@code distance=..1} scoping breaks down within ~1 block).
+     * A scoreboard tag unique to this group, added to every spawned entity. Any leftover command
+     * dispatched through the fallback path is scoped with this tag so a model only ever touches
+     * its own parts - models authored with the same shared {@code bde_N} tags no longer fight over
+     * each other's entities when placed close together.
      */
     public String getAnimTag() {
         return "bdeg_" + groupId.toString().replace("-", "").substring(0, 12);
     }
 
-    /** Tag a freshly spawned entity so both the cleanup sweep (PDC) and animations (tag) can find it. */
+    /**
+     * Register a freshly spawned entity: PDC group id (cleanup sweep + nearest lookup), the unique
+     * group tag (fallback command scoping), and its author tags (bde_N) for the animation engine.
+     */
     private void tagPart(Entity e, NamespacedKey groupKey) {
         e.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
         e.addScoreboardTag(getAnimTag());
+        partIds.add(e.getUniqueId());
+        for (String tag : e.getScoreboardTags()) {
+            if (!tag.equals(getAnimTag())) {
+                partsByTag.computeIfAbsent(tag, k -> new ArrayList<>()).add(e.getUniqueId());
+            }
+        }
+    }
+
+    /** Run an action on every part that currently resolves to a live entity. */
+    public void forEachPart(Consumer<Entity> action) {
+        for (UUID id : partIds) {
+            Entity e = Bukkit.getEntity(id);
+            if (e != null && e.isValid()) {
+                action.accept(e);
+            }
+        }
     }
 
     public void reconnectOrSpawn(ModelData modelData, BlockDisplayPlugin plugin) {
@@ -127,7 +153,6 @@ public class ModelGroup {
                     Entity spawnedPart = plugin.getServer().getEntity(partUuid);
                     if (spawnedPart != null) {
                         tagPart(spawnedPart, groupKey);
-                        parts.add(spawnedPart);
                     } else {
                         // Entity may not be registered yet; schedule a retry on the next tick
                         final UUID retryUuid = partUuid;
@@ -135,7 +160,6 @@ public class ModelGroup {
                             Entity retryPart = plugin.getServer().getEntity(retryUuid);
                             if (retryPart != null) {
                                 tagPart(retryPart, groupKey);
-                                parts.add(retryPart);
                             } else {
                                 plugin.getLogger().warning("Spawned part not found after retry: " + retryUuid);
                             }
@@ -169,14 +193,12 @@ public class ModelGroup {
                     Entity spawnedHitbox = plugin.getServer().getEntity(hitboxUuid);
                     if (spawnedHitbox != null) {
                         tagPart(spawnedHitbox, groupKey);
-                        parts.add(spawnedHitbox);
                     } else {
                         final UUID retryUuid = hitboxUuid;
                         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
                             Entity retryPart = plugin.getServer().getEntity(retryUuid);
                             if (retryPart != null) {
                                 tagPart(retryPart, groupKey);
-                                parts.add(retryPart);
                             }
                         }, 1L);
                     }
@@ -193,17 +215,13 @@ public class ModelGroup {
         // Mark as ready after a short delay so all entities are fully registered
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> this.ready = true, 3L);
 
-        plugin.getLogger().info("Model '" + displayName + "' (" + modelId + ") spawned with " + parts.size() + " parts.");
+        plugin.getLogger().info("Model '" + displayName + "' (" + modelId + ") spawned with " + partIds.size() + " parts.");
     }
 
     public void remove(BlockDisplayPlugin plugin) {
-        // Remove tracked parts
-        for (Entity part : parts) {
-            if (part != null && part.isValid()) {
-                part.remove();
-            }
-        }
-        parts.clear();
+        forEachPart(Entity::remove);
+        partIds.clear();
+        partsByTag.clear();
 
         // Sweep for any untracked entities with our group_id tag
         World world = origin.getWorld();
@@ -221,13 +239,20 @@ public class ModelGroup {
 
     public void setYaw(float yaw) {
         this.yawOffset = yaw;
-        for (Entity part : parts) {
-            if (part != null && part.isValid()) {
-                Location loc = part.getLocation();
-                loc.setYaw(yaw);
-                part.teleport(loc);
-            }
-        }
+        forEachPart(part -> {
+            Location loc = part.getLocation();
+            loc.setYaw(yaw);
+            part.teleport(loc);
+        });
+    }
+
+    /**
+     * Shift the whole model by a precise offset. Transformation matrices are relative to each
+     * entity's own position, so a running animation is completely unaffected by the move.
+     */
+    public void move(double dx, double dy, double dz) {
+        origin.add(dx, dy, dz);
+        forEachPart(part -> part.teleport(part.getLocation().add(dx, dy, dz)));
     }
 
     // Getters and setters
@@ -236,8 +261,8 @@ public class ModelGroup {
     public String getModelId() { return modelId; }
     public String getDisplayName() { return displayName; }
     public ModelData getModelData() { return modelData; }
-    public List<Entity> getParts() { return parts; }
-    public int getPartCount() { return parts.size(); }
+    public Map<String, List<UUID>> getPartsByTag() { return partsByTag; }
+    public int getPartCount() { return partIds.size(); }
     public boolean isReady() { return ready; }
     public boolean isAnimating() { return animating; }
     public void setAnimating(boolean animating) { this.animating = animating; }
