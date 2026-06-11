@@ -58,3 +58,14 @@ el plugin renombrado migra `plugins/SuperBlocksDisplays` → `plugins/SuperFurni
 - **`/sf hitbox <ancho> <alto>`**: persiste `hitbox.width/height` del tipo cercano, re-sincroniza
   en vivo TODOS los anchors cargados (`syncHitbox`) + reshell del cercano + auto-`show`; los de
   chunks descargados se alinean solos al cargar (sync de hitbox añadido al `EntitiesLoadEvent`).
+- **Rotación in-place** (`FurnitureManager.rotateFurniture`): el DUEÑO gira su mueble 90°
+  con **agachado + golpe** (las piezas viven todas en el origen con la forma en matrices →
+  girar = yaw+90 por pieza; los hitboxes autorados con offset orbitan el eje). Pre-check de
+  espacio del caparazón girado ANTES de tocar nada, eject de sentados, `keyYaw`+`reshell`,
+  cooldown 400ms. WALL no se gira (recolocar). Hint actualizado: "agáchate: clic derecho =
+  recoger, golpe = girar".
+- **Colocación endurecida**: el space-check de sólidos usa el footprint REAL (no la columna),
+  y la sonda de protección (`BlockPlaceEvent` sintético) se lanza POR CELDA del caparazón —
+  un footprint que invade la región del vecino se rechaza aunque el bloque clicado sí sea tuyo.
+- **Guía de testeo**: [`docs/TESTING_MUEBLES.md`](docs/TESTING_MUEBLES.md) — checklist completo
+  de la primera prueba en vivo (item MM + furniture.yml de ejemplo + tabla de esperados).

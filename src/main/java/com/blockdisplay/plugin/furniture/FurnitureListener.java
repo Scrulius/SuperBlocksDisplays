@@ -118,8 +118,19 @@ public class FurnitureListener implements Listener {
     @EventHandler
     public void onAttack(PrePlayerAttackEntityEvent e) {
         Entity attacked = e.getAttacked();
-        if (!attacked.getPersistentDataContainer().has(manager.keyInstance, PersistentDataType.STRING)) return;
+        String instance = attacked.getPersistentDataContainer()
+                .get(manager.keyInstance, PersistentDataType.STRING);
+        if (instance == null) return;
         e.setCancelled(true);
+
+        // Sneak + punch = rotate 90° (owner only; rotateFurniture does its own checks)
+        if (e.getPlayer().isSneaking()) {
+            Interaction anchor = resolveAnchor(attacked, instance);
+            if (anchor != null) {
+                manager.rotateFurniture(e.getPlayer(), anchor);
+            }
+            return;
+        }
 
         // Gentle hint, throttled per player
         long now = System.currentTimeMillis();
@@ -127,7 +138,7 @@ public class FurnitureListener implements Listener {
         Long last = hintCooldown.get(id);
         if (last == null || now - last > 3000) {
             hintCooldown.put(id, now);
-            manager.bar(e.getPlayer(), "Agáchate + clic derecho con la mano vacía para recoger el mueble.", NamedTextColor.GRAY);
+            manager.bar(e.getPlayer(), "Agáchate: clic derecho mano vacía = recoger, golpe = girar.", NamedTextColor.GRAY);
         }
     }
 

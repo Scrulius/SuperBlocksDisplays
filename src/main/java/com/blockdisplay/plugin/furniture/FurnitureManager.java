@@ -59,6 +59,7 @@ public class FurnitureManager {
     /** Menu/command furniture runs arbitrary commands per click — throttled per player. */
     private final Map<UUID, Long> interactCooldown = new HashMap<>();
     private static final long INTERACT_COOLDOWN_MS = 1000;
+    private final Map<UUID, Long> rotateCooldown = new HashMap<>();
 
     public FurnitureManager(BlockDisplayPlugin plugin, FurnitureRegistry registry, PlacementIndex index, MythicHook mythic) {
         this.plugin = plugin;
@@ -112,25 +113,44 @@ public class FurnitureManager {
         }
 
         Block target = clicked.getRelative(face);
-
-        // Space check: the target column must be replaceable up to the hitbox height (floor only)
         int heightBlocks = (type.anchor == FurnitureType.Anchor.FLOOR)
                 ? Math.max(1, (int) Math.ceil(type.hitboxHeight)) : 1;
-        for (int dy = 0; dy < heightBlocks; dy++) {
-            if (!target.getRelative(0, dy, 0).isReplaceable()) {
-                bar(player, "No hay espacio suficiente aquí.", NamedTextColor.YELLOW);
-                return false;
+        float yaw = (type.anchor == FurnitureType.Anchor.WALL) ? faceYaw(face) : snap90(player.getLocation().getYaw());
+
+        // Space check: solid furniture must fit its WHOLE shell (a custom footprint can be an
+        // L or a 2-wide sofa); non-solid (or default shell) checks the origin column.
+        List<Block> shellCells = type.solid ? shellBlocks(type, target, yaw, heightBlocks) : null;
+        if (shellCells != null && !type.footprint.isEmpty()) {
+            for (Block cell : shellCells) {
+                if (!cell.isReplaceable()) {
+                    bar(player, "No hay espacio suficiente aquí.", NamedTextColor.YELLOW);
+                    return false;
+                }
+            }
+        } else {
+            for (int dy = 0; dy < heightBlocks; dy++) {
+                if (!target.getRelative(0, dy, 0).isReplaceable()) {
+                    bar(player, "No hay espacio suficiente aquí.", NamedTextColor.YELLOW);
+                    return false;
+                }
             }
         }
 
         // Protection probe: a synthetic BlockPlaceEvent lets WorldGuard/Towny/any protection veto
-        // the placement without compiling against any of them.
-        BlockPlaceEvent probe = new BlockPlaceEvent(target, target.getState(), clicked,
-                inHand, player, true, EquipmentSlot.HAND);
-        Bukkit.getPluginManager().callEvent(probe);
-        if (probe.isCancelled() || !probe.canBuild()) {
+        // the placement without compiling against any of them. Every shell cell is probed — a
+        // footprint reaching into someone else's region must be vetoed cell by cell, not only
+        // at the clicked block.
+        if (!canBuildAt(player, target, clicked, inHand)) {
             bar(player, "No puedes construir aquí.", NamedTextColor.RED);
             return false;
+        }
+        if (shellCells != null) {
+            for (Block cell : shellCells) {
+                if (!cell.equals(target) && !canBuildAt(player, cell, clicked, inHand)) {
+                    bar(player, "El mueble invade una zona donde no puedes construir.", NamedTextColor.RED);
+                    return false;
+                }
+            }
         }
 
         // Limits
@@ -161,12 +181,11 @@ public class FurnitureManager {
             return false;
         }
 
-        // Origin + rotation
+        // Origin (yaw computed above, before the shell checks)
         Location origin = switch (type.anchor) {
             case FLOOR, WALL -> target.getLocation().add(0.5, 0.0, 0.5);
             case CEILING -> target.getLocation().add(0.5, 1.0, 0.5);
         };
-        float yaw = (type.anchor == FurnitureType.Anchor.WALL) ? faceYaw(face) : snap90(player.getLocation().getYaw());
 
         // Spawn the model parts, tagging each with the instance id
         String instanceStr = UUID.randomUUID().toString();
@@ -210,7 +229,8 @@ public class FurnitureManager {
         return true;
     }
 
-    private String placeBarriers(FurnitureType type, Block target, float yaw, int heightBlocks) {
+    /** The blocks a solid furniture's shell occupies: its footprint (yaw-rotated) or the origin column. */
+    private static List<Block> shellBlocks(FurnitureType type, Block target, float yaw, int heightBlocks) {
         List<Block> blocks = new ArrayList<>();
         if (type.footprint.isEmpty()) {
             for (int dy = 0; dy < heightBlocks; dy++) {
@@ -223,8 +243,12 @@ public class FurnitureManager {
                         (int) Math.round(rotated[0]), off[1], (int) Math.round(rotated[1])));
             }
         }
+        return blocks;
+    }
+
+    private String placeBarriers(FurnitureType type, Block target, float yaw, int heightBlocks) {
         StringBuilder csv = new StringBuilder();
-        for (Block b : blocks) {
+        for (Block b : shellBlocks(type, target, yaw, heightBlocks)) {
             if (b.isReplaceable()) {
                 b.setType(Material.BARRIER);
                 if (csv.length() > 0) csv.append(';');
@@ -232,6 +256,14 @@ public class FurnitureManager {
             }
         }
         return csv.toString();
+    }
+
+    /** Synthetic BlockPlaceEvent probe: any protection plugin can veto without a compile dep. */
+    private static boolean canBuildAt(Player player, Block cell, Block clicked, ItemStack inHand) {
+        BlockPlaceEvent probe = new BlockPlaceEvent(cell, cell.getState(), clicked,
+                inHand, player, true, EquipmentSlot.HAND);
+        Bukkit.getPluginManager().callEvent(probe);
+        return !probe.isCancelled() && probe.canBuild();
     }
 
     // ==================== PICKUP ====================
@@ -373,6 +405,94 @@ public class FurnitureManager {
             }
         }
         return new int[]{removed, pruned};
+    }
+
+    // ==================== ROTATE IN PLACE ====================
+
+    /**
+     * Rotate a placed furniture 90° clockwise without picking it up (owner: sneak + punch).
+     * Model parts all live at the anchor origin with their shape in transformation matrices,
+     * so rotating is mostly per-entity yaw; authored hitbox parts CAN sit at an offset and get
+     * orbited around the origin. The solid shell is re-laid for the new yaw, with a fit check
+     * BEFORE touching anything.
+     */
+    public void rotateFurniture(Player player, Interaction anchor) {
+        PersistentDataContainer pdc = anchor.getPersistentDataContainer();
+        String instanceStr = pdc.get(keyInstance, PersistentDataType.STRING);
+        String ownerStr = pdc.get(keyOwner, PersistentDataType.STRING);
+        if (instanceStr == null) return;
+
+        if (ownerStr != null && !ownerStr.equals(player.getUniqueId().toString())
+                && !player.hasPermission("superfurnitures.admin.bypass")) {
+            bar(player, "Este mueble no es tuyo.", NamedTextColor.RED);
+            return;
+        }
+        FurnitureType type = registry.byId(pdc.get(keyType, PersistentDataType.STRING));
+        if (type == null) {
+            bar(player, "Este mueble ya no está en el catálogo; recógelo.", NamedTextColor.YELLOW);
+            return;
+        }
+        if (type.anchor == FurnitureType.Anchor.WALL) {
+            bar(player, "Los muebles de pared no se giran: recógelo y colócalo en otra cara.", NamedTextColor.YELLOW);
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        Long last = rotateCooldown.get(player.getUniqueId());
+        if (last != null && now - last < 400) return;
+        rotateCooldown.put(player.getUniqueId(), now);
+
+        Float yawObj = pdc.get(keyYaw, PersistentDataType.FLOAT);
+        float oldYaw = yawObj != null ? yawObj : 0f;
+        float newYaw = (oldYaw + 90f) % 360f;
+        World world = anchor.getWorld();
+        Location origin = anchor.getLocation();
+
+        // Fit check: the rotated shell must land on replaceable blocks or on our own barriers
+        if (type.solid) {
+            Set<String> ours = new HashSet<>();
+            String barrierCsv = pdc.get(keyBarriers, PersistentDataType.STRING);
+            if (barrierCsv != null && !barrierCsv.isEmpty()) {
+                ours.addAll(List.of(barrierCsv.split(";")));
+            }
+            int heightBlocks = (type.anchor == FurnitureType.Anchor.FLOOR)
+                    ? Math.max(1, (int) Math.ceil(type.hitboxHeight)) : 1;
+            for (Block cell : shellBlocks(type, shellTarget(anchor, type), newYaw, heightBlocks)) {
+                String pos = cell.getX() + "," + cell.getY() + "," + cell.getZ();
+                if (!cell.isReplaceable() && !ours.contains(pos)) {
+                    bar(player, "No hay espacio para girarlo hacia ahí.", NamedTextColor.YELLOW);
+                    return;
+                }
+            }
+        }
+
+        // Spin the entities: seats are ejected (they re-spawn rotated on next sit), parts get
+        // +90° yaw, off-origin parts (authored hitboxes) also orbit around the anchor axis.
+        for (Entity near : world.getNearbyEntities(origin, 8, 8, 8)) {
+            if (near == anchor
+                    || !instanceStr.equals(near.getPersistentDataContainer().get(keyInstance, PersistentDataType.STRING))) {
+                continue;
+            }
+            if (near.getPersistentDataContainer().has(keySeat, PersistentDataType.BYTE)) {
+                near.eject();
+                near.remove();
+                activeSeats.remove(near.getUniqueId());
+                continue;
+            }
+            Location l = near.getLocation();
+            double offX = l.getX() - origin.getX();
+            double offZ = l.getZ() - origin.getZ();
+            double[] r = rotate(offX, offZ, 90f);
+            Location moved = new Location(world,
+                    origin.getX() + r[0], l.getY(), origin.getZ() + r[1],
+                    l.getYaw() + 90f, l.getPitch());
+            near.teleport(moved);
+        }
+
+        pdc.set(keyYaw, PersistentDataType.FLOAT, newYaw);
+        reshell(anchor);
+        playSound(world, origin, type.placeSound);
+        bar(player, "Mueble girado.", NamedTextColor.GREEN);
     }
 
     // ==================== TYPE RE-SYNC (admin tuning tools) ====================
