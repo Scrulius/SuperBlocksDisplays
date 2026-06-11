@@ -147,6 +147,7 @@ public class FurnitureListener implements Listener {
 
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
+        plugin.getSeatEditor().discard(e.getPlayer().getUniqueId());
         Entity vehicle = e.getPlayer().getVehicle();
         if (vehicle != null
                 && vehicle.getPersistentDataContainer().has(manager.keySeat, PersistentDataType.BYTE)) {

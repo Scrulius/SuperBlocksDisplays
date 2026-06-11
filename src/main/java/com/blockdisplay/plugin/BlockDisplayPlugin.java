@@ -6,6 +6,7 @@ import com.blockdisplay.plugin.furniture.FurnitureManager;
 import com.blockdisplay.plugin.furniture.FurnitureRegistry;
 import com.blockdisplay.plugin.furniture.MythicHook;
 import com.blockdisplay.plugin.furniture.PlacementIndex;
+import com.blockdisplay.plugin.furniture.SeatEditor;
 import com.blockdisplay.plugin.furniture.SfCommand;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.Logger;
@@ -24,6 +25,7 @@ public class BlockDisplayPlugin extends JavaPlugin {
     private SilentCommandSender silentSender;
     private CommandFeedbackFilter logFilter;
     private FurnitureManager furnitureManager;
+    private SeatEditor seatEditor;
     private final Map<UUID, ModelGroup> activeGroups = new HashMap<>();
     // Animated furniture instances currently loaded (adopted vanilla-persistent entities).
     private final Map<UUID, ModelGroup> furnitureAnimGroups = new HashMap<>();
@@ -75,9 +77,10 @@ public class BlockDisplayPlugin extends JavaPlugin {
         FurnitureRegistry furnitureRegistry = new FurnitureRegistry(this);
         PlacementIndex placementIndex = new PlacementIndex(this);
         this.furnitureManager = new FurnitureManager(this, furnitureRegistry, placementIndex, mythicHook);
+        this.seatEditor = new SeatEditor(this, furnitureManager);
         getServer().getPluginManager().registerEvents(new FurnitureListener(this, furnitureManager), this);
 
-        SfCommand sfCommand = new SfCommand(this, furnitureManager);
+        SfCommand sfCommand = new SfCommand(this, furnitureManager, seatEditor);
         getCommand("sf").setExecutor(sfCommand);
         getCommand("sf").setTabCompleter(sfCommand);
         FurnitureCommand furnitureCommand = new FurnitureCommand(furnitureManager);
@@ -129,6 +132,9 @@ public class BlockDisplayPlugin extends JavaPlugin {
         if (furnitureManager != null) {
             furnitureManager.removeAllSeats();
         }
+        if (seatEditor != null) {
+            seatEditor.discardAll();
+        }
         furnitureAnimGroups.clear();
 
         // Remove all admin-managed (/bde) display entities so they don't duplicate on restart
@@ -166,6 +172,7 @@ public class BlockDisplayPlugin extends JavaPlugin {
     public Map<UUID, ModelGroup> getActiveGroups() { return activeGroups; }
     public Map<UUID, ModelGroup> getFurnitureAnimGroups() { return furnitureAnimGroups; }
     public FurnitureManager getFurnitureManager() { return furnitureManager; }
+    public SeatEditor getSeatEditor() { return seatEditor; }
 
     /**
      * Find a model group by its display name (case-insensitive).

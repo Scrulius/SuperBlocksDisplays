@@ -578,8 +578,25 @@ public class FurnitureManager {
         return limit;
     }
 
+    /** Nearest furniture anchor around the player (admin tools: /sf seats|show|info). */
+    public Interaction findNearestAnchor(Player player, double radius) {
+        Interaction best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (Entity near : player.getNearbyEntities(radius, radius, radius)) {
+            if (near instanceof Interaction i
+                    && i.getPersistentDataContainer().has(keyType, PersistentDataType.STRING)) {
+                double d = i.getLocation().distanceSquared(player.getLocation());
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = i;
+                }
+            }
+        }
+        return best;
+    }
+
     /** Rotate a local-space (x, z) offset (+z = model facing) by the furniture yaw. */
-    private static double[] rotate(double lx, double lz, float yaw) {
+    static double[] rotate(double lx, double lz, float yaw) {
         double rad = Math.toRadians(yaw);
         double cos = Math.cos(rad);
         double sin = Math.sin(rad);

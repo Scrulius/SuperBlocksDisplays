@@ -3,13 +3,16 @@ package com.blockdisplay.plugin.furniture;
 import com.blockdisplay.plugin.BlockDisplayPlugin;
 import net.md_5.bungee.api.ChatColor;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.persistence.PersistentDataType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -30,10 +33,12 @@ public class SfCommand implements CommandExecutor, TabCompleter {
 
     private final BlockDisplayPlugin plugin;
     private final FurnitureManager manager;
+    private final SeatEditor seatEditor;
 
-    public SfCommand(BlockDisplayPlugin plugin, FurnitureManager manager) {
+    public SfCommand(BlockDisplayPlugin plugin, FurnitureManager manager, SeatEditor seatEditor) {
         this.plugin = plugin;
         this.manager = manager;
+        this.seatEditor = seatEditor;
     }
 
     @Override
@@ -43,6 +48,9 @@ public class SfCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(PREFIX + ChatColor.YELLOW + "/sf types" + ChatColor.GRAY + " - Listar muebles registrados");
             sender.sendMessage(PREFIX + ChatColor.YELLOW + "/sf list [jugador]" + ChatColor.GRAY + " - Muebles colocados (todos o de un jugador)");
             sender.sendMessage(PREFIX + ChatColor.YELLOW + "/sf purge <jugador>" + ChatColor.GRAY + " - Eliminar TODOS los muebles de un jugador");
+            sender.sendMessage(PREFIX + ChatColor.YELLOW + "/sf seats" + ChatColor.GRAY + " - Editor de asientos con maniquís (mueble cercano)");
+            sender.sendMessage(PREFIX + ChatColor.YELLOW + "/sf show" + ChatColor.GRAY + " - Ver hitbox y barreras del mueble cercano (partículas)");
+            sender.sendMessage(PREFIX + ChatColor.YELLOW + "/sf info" + ChatColor.GRAY + " - Radiografía del mueble cercano");
             sender.sendMessage(PREFIX + ChatColor.YELLOW + "/sf reload" + ChatColor.GRAY + " - Recargar furniture.yml");
             return true;
         }
@@ -169,6 +177,68 @@ public class SfCommand implements CommandExecutor, TabCompleter {
                             + ChatColor.GREEN + ".");
                 }
             }
+            case "seats" -> {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage(PREFIX + ChatColor.RED + "El editor de asientos es in-game (hay que verse los maniquís).");
+                    return true;
+                }
+                String sub = args.length >= 2 ? args[1].toLowerCase() : "start";
+                switch (sub) {
+                    case "start" -> seatEditor.start(player);
+                    case "add" -> seatEditor.add(player);
+                    case "list" -> seatEditor.list(player);
+                    case "save" -> seatEditor.save(player);
+                    case "cancel" -> seatEditor.cancel(player);
+                    case "remove" -> {
+                        Integer n = parseInt(sender, args, 2, "Uso: /sf seats remove <n>");
+                        if (n != null) seatEditor.remove(player, n);
+                    }
+                    case "move" -> {
+                        if (args.length < 5) {
+                            sender.sendMessage(PREFIX + ChatColor.RED + "Uso: /sf seats move <n> <x|y|z> <delta>  (ej: /sf seats move 1 y -0.2)");
+                            return true;
+                        }
+                        Integer n = parseInt(sender, args, 2, "El número de asiento debe ser un entero.");
+                        if (n == null) return true;
+                        double delta;
+                        try {
+                            delta = Double.parseDouble(args[4]);
+                        } catch (NumberFormatException e) {
+                            sender.sendMessage(PREFIX + ChatColor.RED + "Delta inválido: " + args[4]);
+                            return true;
+                        }
+                        seatEditor.move(player, n, args[3], delta);
+                    }
+                    default -> sender.sendMessage(PREFIX + ChatColor.RED
+                            + "Uso: /sf seats [add|move|remove|list|save|cancel]");
+                }
+            }
+            case "show" -> {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage(PREFIX + ChatColor.RED + "Solo in-game.");
+                    return true;
+                }
+                Interaction anchor = manager.findNearestAnchor(player, 5.0);
+                if (anchor == null) {
+                    sender.sendMessage(PREFIX + ChatColor.RED + "No hay ningún mueble a menos de 5 bloques.");
+                    return true;
+                }
+                FurnitureVisualizer.show(plugin, manager, player, anchor);
+                sender.sendMessage(PREFIX + ChatColor.GREEN + "Mostrando 10s: " + ChatColor.AQUA + "hitbox"
+                        + ChatColor.GREEN + " y " + ChatColor.RED + "barreras" + ChatColor.GREEN + " del mueble.");
+            }
+            case "info" -> {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage(PREFIX + ChatColor.RED + "Solo in-game.");
+                    return true;
+                }
+                Interaction anchor = manager.findNearestAnchor(player, 5.0);
+                if (anchor == null) {
+                    sender.sendMessage(PREFIX + ChatColor.RED + "No hay ningún mueble a menos de 5 bloques.");
+                    return true;
+                }
+                sendInfo(player, anchor);
+            }
             case "reload" -> {
                 manager.getRegistry().load();
                 sender.sendMessage(PREFIX + ChatColor.GREEN + "furniture.yml recargado: "
@@ -183,7 +253,13 @@ public class SfCommand implements CommandExecutor, TabCompleter {
     @Nullable
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            return filter(Arrays.asList("give", "types", "list", "purge", "reload"), args[0]);
+            return filter(Arrays.asList("give", "types", "list", "purge", "seats", "show", "info", "reload"), args[0]);
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("seats")) {
+            return filter(Arrays.asList("add", "move", "remove", "list", "save", "cancel"), args[1]);
+        }
+        if (args.length == 4 && args[0].equalsIgnoreCase("seats") && args[1].equalsIgnoreCase("move")) {
+            return filter(Arrays.asList("x", "y", "z"), args[3]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("give")) {
             return filter(manager.getRegistry().all().stream().map(t -> t.id).collect(Collectors.toList()), args[1]);
@@ -195,6 +271,64 @@ public class SfCommand implements CommandExecutor, TabCompleter {
             return null; // jugadores online
         }
         return Collections.emptyList();
+    }
+
+    private void sendInfo(Player player, Interaction anchor) {
+        var pdc = anchor.getPersistentDataContainer();
+        String typeId = pdc.get(manager.keyType, PersistentDataType.STRING);
+        String instance = pdc.get(manager.keyInstance, PersistentDataType.STRING);
+        String ownerStr = pdc.get(manager.keyOwner, PersistentDataType.STRING);
+        Float yaw = pdc.get(manager.keyYaw, PersistentDataType.FLOAT);
+        String partsCsv = pdc.get(manager.keyParts, PersistentDataType.STRING);
+        String barrierCsv = pdc.get(manager.keyBarriers, PersistentDataType.STRING);
+        FurnitureType type = manager.getRegistry().byId(typeId);
+
+        String ownerName = ownerStr;
+        if (ownerStr != null) {
+            try {
+                String resolved = Bukkit.getOfflinePlayer(UUID.fromString(ownerStr)).getName();
+                if (resolved != null) ownerName = resolved;
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        int parts = (partsCsv == null || partsCsv.isEmpty()) ? 0 : partsCsv.split(",").length;
+        int barriers = (barrierCsv == null || barrierCsv.isEmpty()) ? 0 : barrierCsv.split(";").length;
+        Location loc = anchor.getLocation();
+
+        player.sendMessage(PREFIX + ChatColor.GOLD + "Mueble '" + typeId + "'"
+                + (type == null ? ChatColor.RED + " (¡ya no está en el catálogo!)" : ""));
+        player.sendMessage(ChatColor.GRAY + " Dueño: " + ChatColor.WHITE + ownerName
+                + ChatColor.DARK_GRAY + "  yaw " + (yaw != null ? Math.round(yaw) : "?") + "°");
+        player.sendMessage(ChatColor.GRAY + " Posición: " + ChatColor.WHITE
+                + String.format("%.1f, %.1f, %.1f", loc.getX(), loc.getY(), loc.getZ())
+                + ChatColor.DARK_GRAY + " (" + loc.getWorld().getName() + ")");
+        player.sendMessage(ChatColor.GRAY + " Piezas: " + ChatColor.WHITE + parts
+                + ChatColor.GRAY + "  Barreras: " + ChatColor.WHITE + barriers
+                + ChatColor.GRAY + "  Hitbox: " + ChatColor.WHITE
+                + anchor.getInteractionWidth() + "×" + anchor.getInteractionHeight());
+        if (type != null) {
+            player.sendMessage(ChatColor.GRAY + " Interacción: " + ChatColor.WHITE
+                    + type.interactionType.name().toLowerCase()
+                    + (type.interactionType == FurnitureType.InteractionType.SEAT
+                            ? ChatColor.GRAY + " (" + type.seats.size() + " asiento(s))" : "")
+                    + (type.animated ? ChatColor.AQUA + "  animado" : "")
+                    + (type.solid ? ChatColor.YELLOW + "  sólido" : ""));
+        }
+        player.sendMessage(ChatColor.DARK_GRAY + " Instancia: " + instance);
+    }
+
+    @Nullable
+    private Integer parseInt(CommandSender sender, String[] args, int idx, String usage) {
+        if (args.length <= idx) {
+            sender.sendMessage(PREFIX + ChatColor.RED + usage);
+            return null;
+        }
+        try {
+            return Integer.parseInt(args[idx]);
+        } catch (NumberFormatException e) {
+            sender.sendMessage(PREFIX + ChatColor.RED + "Número inválido: " + args[idx]);
+            return null;
+        }
     }
 
     /** Online exacto primero; si no, el usercache (cualquiera que haya entrado alguna vez). */

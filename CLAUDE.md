@@ -33,3 +33,15 @@ el plugin renombrado migra `plugins/SuperBlocksDisplays` → `plugins/SuperFurni
   anti-asfixia al desmontar asiento dentro de mueble sólido (`rescueFromSuffocation`, sube al
   primer hueco libre; también en quit ANTES de que guarde la posición); muebles menu/commands
   con cooldown 1s por jugador (anti-spam de comandos).
+- **Herramientas de tuning in-game** (`SeatEditor` + `FurnitureVisualizer`): `/sf seats` =
+  editor WYSIWYG de asientos — spawnea un **MANNEQUIN** (entity runtime 26.1.2; se resuelve
+  por `EntityType.valueOf` porque el pom compila contra paper-api 1.21.1 que no la tiene;
+  fallback armor stand con brazos) montado en el stand marker de cada asiento → se ve sentado
+  EXACTAMENTE como un jugador. Flujo: ponerse de pie donde va el asiento → `add` (offset =
+  posición del admin − 0.45 de caída al sentarse, inverso-rotado a espacio local), `move <n>
+  <x|y|z> <delta>` para afinar mirando el maniquí, `save` escribe `interaction.seats` en
+  furniture.yml (fuerza `interaction.type: seat`) + `registry.load()` → aplica al instante a
+  todos los colocados. Previews no-persistentes, limpieza en quit/disable, sesión auto-cancela
+  si el mueble desaparece. `/sf show` = wireframe de partículas DUST 10s (hitbox cian, barreras
+  rojas, solo las ve el admin); se auto-lanza al abrir el editor. `/sf info` = radiografía del
+  mueble cercano (dueño, piezas, barreras, hitbox, interacción, instancia).
