@@ -28,6 +28,16 @@ el plugin renombrado migra `plugins/SuperBlocksDisplays` → `plugins/SuperFurni
   NUNCA depende de la API. Los muebles de jugadores usarán otra arquitectura: entities
   persistentes vanilla + metadata en PDC (ver diseño).
 - Piezas trackeadas por **UUID** (no referencias `Entity`, quedan stale al recargar chunk).
+- **GUI de muebles del jugador (v1.3.0, `FurnitureGui`)**: `/furniture` (alias `/muebles`) sin
+  args abre un GUI paginado (45/página, prev/info/next/cerrar en 48/49/50/53) con un icono por
+  mueble colocado — el **ItemStack real de MythicMobs** (se ve el mueble), título = display name
+  del item MM (fallback al id), lore con tipo/mundo/coordenadas/distancia — y **clic = recogerlo
+  a distancia**: `FurnitureManager.pickupRemote` resuelve el anchor por instance id cargando el
+  chunk (mismo patrón que `purgeOwner`) y reutiliza `pickup()` (chequeo de dueño, item de vuelta,
+  sonidos); si el anchor ya no existe poda la entrada del índice. Huérfanos (tipo fuera del
+  catálogo) salen como BARRier con aviso "no devuelve item". Anti-dupe: TODOS los clics/drags que
+  tocan el top se cancelan (los iconos son items reales). Orden: mundo del jugador primero por
+  distancia, luego otros mundos. `/furniture list|limit` siguen como salida de texto.
 - Robustez post-v1.2.0: `/sf list [jugador]` (resumen global por dueño o detalle) y
   `/sf purge <jugador>` (`FurnitureManager.purgeOwner`, carga chunks bajo demanda); el índice
   (`placements.json`) se **auto-cura en `EntitiesLoadEvent`** (poda entradas sin anchor — admin

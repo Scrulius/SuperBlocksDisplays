@@ -103,6 +103,11 @@ public class PlacementIndex {
         return byInstance.containsKey(instanceId);
     }
 
+    /** The placement of one instance, or null if the index doesn't know it. */
+    public Placement get(String instanceId) {
+        return byInstance.get(instanceId);
+    }
+
     /** Snapshot of every entry (admin /sf list). */
     public Map<String, Placement> all() {
         return new HashMap<>(byInstance);

@@ -373,6 +373,39 @@ public class FurnitureManager {
     }
 
     /**
+     * Remote pickup (furniture GUI): resolves the anchor by instance id — loading the chunk on
+     * demand, same as purgeOwner — and reuses pickup() (ownership check, item back, sounds).
+     *
+     * @return true if the index changed (furniture picked up, or stale entry pruned).
+     */
+    public boolean pickupRemote(Player player, String instance) {
+        PlacementIndex.Placement p = index.get(instance);
+        if (p == null) return false;
+        if (!p.owner().equals(player.getUniqueId().toString())
+                && !player.hasPermission("superfurnitures.admin.bypass")) {
+            bar(player, "Este mueble no es tuyo.", NamedTextColor.RED);
+            return false;
+        }
+        World world = Bukkit.getWorld(p.world());
+        if (world == null) {
+            index.remove(instance);
+            bar(player, "El mundo de ese mueble ya no existe; entrada retirada.", NamedTextColor.YELLOW);
+            return true;
+        }
+        org.bukkit.Chunk chunk = world.getChunkAt(((int) Math.floor(p.x())) >> 4, ((int) Math.floor(p.z())) >> 4);
+        for (Entity ent : chunk.getEntities()) {
+            if (ent instanceof Interaction i
+                    && instance.equals(i.getPersistentDataContainer().get(keyInstance, PersistentDataType.STRING))) {
+                pickup(player, i);
+                return true;
+            }
+        }
+        index.remove(instance);
+        bar(player, "Ese mueble ya no existe; entrada retirada del listado.", NamedTextColor.YELLOW);
+        return true;
+    }
+
+    /**
      * Admin: remove ALL furniture of a player, loading chunks as needed. Entries whose anchor
      * is gone (killed by hand) are pruned from the index.
      *
@@ -744,7 +777,7 @@ public class FurnitureManager {
     // ==================== HELPERS ====================
 
     /** Highest superfurnitures.limit.N the player carries, or the config default. -1 = unlimited. */
-    private int limitFor(Player player) {
+    public int limitFor(Player player) {
         int limit = registry.getPerPlayerDefault();
         for (PermissionAttachmentInfo pai : player.getEffectivePermissions()) {
             String perm = pai.getPermission();

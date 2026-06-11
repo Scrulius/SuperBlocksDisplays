@@ -2,6 +2,7 @@ package com.blockdisplay.plugin;
 
 import com.blockdisplay.plugin.furniture.FootprintEditor;
 import com.blockdisplay.plugin.furniture.FurnitureCommand;
+import com.blockdisplay.plugin.furniture.FurnitureGui;
 import com.blockdisplay.plugin.furniture.FurnitureListener;
 import com.blockdisplay.plugin.furniture.FurnitureManager;
 import com.blockdisplay.plugin.furniture.FurnitureRegistry;
@@ -86,7 +87,9 @@ public class BlockDisplayPlugin extends JavaPlugin {
         SfCommand sfCommand = new SfCommand(this, furnitureManager, seatEditor, footprintEditor);
         getCommand("sf").setExecutor(sfCommand);
         getCommand("sf").setTabCompleter(sfCommand);
-        FurnitureCommand furnitureCommand = new FurnitureCommand(furnitureManager);
+        FurnitureGui furnitureGui = new FurnitureGui(furnitureManager);
+        getServer().getPluginManager().registerEvents(furnitureGui, this);
+        FurnitureCommand furnitureCommand = new FurnitureCommand(furnitureManager, furnitureGui);
         getCommand("furniture").setExecutor(furnitureCommand);
         getCommand("furniture").setTabCompleter(furnitureCommand);
 

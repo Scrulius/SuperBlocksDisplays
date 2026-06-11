@@ -15,16 +15,18 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-/** /furniture — comando de jugador: list (tus muebles y dónde) y limit (cuota). */
+/** /furniture — comando de jugador: GUI de tus muebles (default), list (texto) y limit (cuota). */
 public class FurnitureCommand implements CommandExecutor, TabCompleter {
 
     private static final String PREFIX = ChatColor.DARK_GRAY + "[" + ChatColor.GOLD + "Muebles" + ChatColor.DARK_GRAY + "] " + ChatColor.RESET;
     private static final int MAX_LIST = 25;
 
     private final FurnitureManager manager;
+    private final FurnitureGui gui;
 
-    public FurnitureCommand(FurnitureManager manager) {
+    public FurnitureCommand(FurnitureManager manager, FurnitureGui gui) {
         this.manager = manager;
+        this.gui = gui;
     }
 
     @Override
@@ -34,8 +36,9 @@ public class FurnitureCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        String action = (args.length > 0) ? args[0].toLowerCase() : "limit";
+        String action = (args.length > 0) ? args[0].toLowerCase() : "gui";
         switch (action) {
+            case "gui" -> gui.open(player, 0);
             case "list" -> {
                 List<PlacementIndex.Placement> placements =
                         manager.getIndex().byOwner(player.getUniqueId().toString());
@@ -72,7 +75,8 @@ public class FurnitureCommand implements CommandExecutor, TabCompleter {
                         + ChatColor.WHITE + used + ChatColor.GRAY + " / " + ChatColor.WHITE + limit);
             }
             default -> {
-                player.sendMessage(PREFIX + ChatColor.YELLOW + "/furniture list" + ChatColor.GRAY + " - Tus muebles y dónde están");
+                player.sendMessage(PREFIX + ChatColor.YELLOW + "/furniture" + ChatColor.GRAY + " - GUI de tus muebles (clic = recoger a distancia)");
+                player.sendMessage(PREFIX + ChatColor.YELLOW + "/furniture list" + ChatColor.GRAY + " - Tus muebles y dónde están (texto)");
                 player.sendMessage(PREFIX + ChatColor.YELLOW + "/furniture limit" + ChatColor.GRAY + " - Tu cuota de muebles");
             }
         }
@@ -84,7 +88,7 @@ public class FurnitureCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
             List<String> out = new ArrayList<>();
-            for (String option : Arrays.asList("list", "limit")) {
+            for (String option : Arrays.asList("gui", "list", "limit")) {
                 if (option.startsWith(args[0].toLowerCase())) out.add(option);
             }
             return out;
