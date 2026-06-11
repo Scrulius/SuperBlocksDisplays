@@ -109,11 +109,20 @@ limits:
 3. **F3 pulido**: solid/barriers, animación idle re-vinculada por chunk, `/sf admin`, renombrado
    completo del plugin/repo.
 
-## Preguntas abiertas (pendientes del autor)
-1. Variantes de color (sofá rojo/azul): ¿entradas separadas en config (simple) o sistema de variantes?
-2. Muebles huérfanos (se borra su entrada de config con unidades colocadas): ¿recogibles devolviendo
-   nada, o solo limpiables por admin?
-3. ¿Blacklist de mundos donde no se puede colocar?
-4. ¿Sanity check de tamaño (warn si un modelo de mueble pasa de ~100 piezas)?
-5. ¿Preview fantasma antes de colocar? (v2+, coste alto)
-6. Renombrado de repo GitHub: ¿Scrulius/SuperFurnitures?
+## Preguntas finas — RESUELTAS (autor, 2026-06-11)
+1. **Variantes de color** (sofá rojo/azul): entradas SEPARADAS en config, una por variante. Sin
+   sistema de variantes.
+2. **Muebles huérfanos** (se borró su entrada de config con unidades colocadas): **siguen siendo
+   recogibles** por su dueño (no devuelven item) y al interactuar/recoger sale un mensaje claro
+   "este mueble fue eliminado del catálogo" — el jugador siempre tiene feedback, nunca un mueble
+   "muerto" que no responde.
+3. **Blacklist de mundos**: SÍ — `disabled-worlds: []` en config (no se puede colocar ahí).
+4. **Sanity check de tamaño**: SÍ — al registrar un mueble cuyo modelo pase del umbral
+   (`max-parts-warn`, default ~100 piezas) → WARN en consola. Razón: el coste de un mueble
+   ESTÁTICO es pasivo pero real — cada pieza es una entity que el cliente recibe (paquete por
+   pieza al entrar en rango) y renderiza; el lag de furniture viene de UN modelo demasiado
+   detallado × muchas unidades, no del sistema. Animado añade coste activo (tick + metadata
+   continua), por eso `animated` es opt-in por mueble.
+5. **Preview fantasma**: v2+, prioridad baja (el propio autor la ve complicada).
+6. **Repo renombrado**: `Scrulius/SuperBlocksDisplays` → **`Scrulius/SuperFurnitures`** (GitHub
+   redirige las URLs viejas). El renombrado del plugin/jar en sí llega con la F3.
