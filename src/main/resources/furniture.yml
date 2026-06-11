@@ -11,7 +11,10 @@
 #     mythic-item: IdDelItemMM     # item de MythicMobs que lo coloca (OBLIGATORIO)
 #     permission: ""               # permiso extra por mueble (opcional, vacío = solo el global)
 #     anchor: floor                # floor | wall | ceiling
-#     solid: false                 # true = pone bloques barrier invisibles (colisión real)
+#     solid: false                 # true = pone bloques barrier invisibles (colisión real).
+#                                  # ⚠ Solo para muebles GRANDES que deban bloquear el paso
+#                                  # (mesas, armarios): el barrier estorba al clicar el mueble
+#                                  # y al construir cerca. Sillas/decoración: déjalo en false.
 #     footprint: []                # offsets "x,y,z" (enteros, espacio local) de los barriers;
 #                                  # vacío + solid = columna en el bloque de origen hasta la
 #                                  # altura del hitbox. Se rotan con el mueble.

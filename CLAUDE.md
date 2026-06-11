@@ -38,6 +38,20 @@ el plugin renombrado migra `plugins/SuperBlocksDisplays` → `plugins/SuperFurni
   catálogo) salen como BARRier con aviso "no devuelve item". Anti-dupe: TODOS los clics/drags que
   tocan el top se cancelan (los iconos son items reales). Orden: mundo del jugador primero por
   distancia, luego otros mundos. `/furniture list|limit` siguen como salida de texto.
+- **Pase anti-restos (v1.3.1)**: TODA entity del plugin lleva tag PDC y está triple-protegida —
+  los previews del editor de asientos (maniquí + stand) llevan `keyPreview` (antes iban SIN tag,
+  solo tracking en memoria: cualquier camino de limpieza perdido dejaba un maniquí matable — en
+  creativo `setInvulnerable` no protege — que soltaba XP). `onDamage` cancela por
+  keyInstance/keySeat/keyPreview; interact/attack a previews cancelado; `removeFurniture` barre
+  también previews y stands sin instancia (recoger un mueble a media edición ya no deja maniquí);
+  **janitor en `EntitiesLoadEvent`**: previews y seat-stands vacíos que aparezcan en un chunk
+  cargado se eliminan (auto-cura mundos con restos antiguos). ⚠️ `pickupRemote`/`purgeOwner`:
+  las entities del chunk cargan ASYNC tras `getChunkAt` — NUNCA podar el índice si
+  `!chunk.isEntitiesLoaded()` (podaría muebles VIVOS → huérfanos); pickupRemote sostiene el chunk
+  con ticket y reintenta hasta 3s (callback `onChanged` para refrescar el GUI).
+- **`solid` es para muebles grandes que deban bloquear el paso**; sillas/decoración SIN barrier
+  (estorba al clicar y al construir). El default ya era false; el `solid: true` de la silla de
+  pruebas se quitó del server.
 - Robustez post-v1.2.0: `/sf list [jugador]` (resumen global por dueño o detalle) y
   `/sf purge <jugador>` (`FurnitureManager.purgeOwner`, carga chunks bajo demanda); el índice
   (`placements.json`) se **auto-cura en `EntitiesLoadEvent`** (poda entradas sin anchor — admin

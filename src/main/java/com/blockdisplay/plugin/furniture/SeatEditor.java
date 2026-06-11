@@ -277,6 +277,7 @@ public class SeatEditor {
                 as.setGravity(false);
                 as.setSmall(true);
                 as.setPersistent(false);
+                as.getPersistentDataContainer().set(manager.keyPreview, PersistentDataType.BYTE, (byte) 1);
             });
             Entity dummy = spawnMannequin(world, seatLoc, n);
             stand.addPassenger(dummy);
@@ -301,6 +302,10 @@ public class SeatEditor {
         dummy.setSilent(true);
         dummy.setPersistent(false);
         dummy.setGravity(false);
+        // The PDC tag is the real safety net: invulnerable doesn't stop creative players, and
+        // in-memory tracking alone left killable mannequins behind if any cleanup path was
+        // missed. Tagged, the listener cancels damage/interact and the janitors can sweep it.
+        dummy.getPersistentDataContainer().set(manager.keyPreview, PersistentDataType.BYTE, (byte) 1);
         dummy.customName(Component.text("Asiento " + n, NamedTextColor.AQUA));
         dummy.setCustomNameVisible(true);
         return dummy;
@@ -315,6 +320,17 @@ public class SeatEditor {
             }
         }
         s.previewIds.clear();
+        // Belt and braces: sweep stray tagged previews around the edited furniture, in case a
+        // UUID was lost (failed mount, plugin reload mid-session, etc.).
+        Entity anchorEnt = Bukkit.getEntity(s.anchorId);
+        if (anchorEnt != null) {
+            for (Entity near : anchorEnt.getWorld().getNearbyEntities(anchorEnt.getLocation(), 6, 6, 6)) {
+                if (near.getPersistentDataContainer().has(manager.keyPreview, PersistentDataType.BYTE)) {
+                    near.eject();
+                    near.remove();
+                }
+            }
+        }
     }
 
     // ==================== HELPERS ====================

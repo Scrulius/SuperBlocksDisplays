@@ -220,9 +220,14 @@ public class FurnitureGui implements Listener {
             click(player);
             open(player, holder.page + 1);
         } else if (slot < holder.slotInstances.size()) {
-            if (manager.pickupRemote(player, holder.slotInstances.get(slot))) {
-                open(player, holder.page);  // re-render: entry gone, counts/pages may shift
-            }
+            // The callback fires when the index actually changed (the chunk may need a few
+            // ticks to stream its entities in); re-render only if the GUI is still on screen.
+            manager.pickupRemote(player, holder.slotInstances.get(slot), () -> {
+                if (player.isOnline()
+                        && player.getOpenInventory().getTopInventory().getHolder() instanceof Holder h) {
+                    open(player, h.page);
+                }
+            });
         }
     }
 

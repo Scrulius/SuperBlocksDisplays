@@ -77,6 +77,10 @@ public class FurnitureListener implements Listener {
     public void onInteractEntity(PlayerInteractEntityEvent e) {
         if (e.getHand() != EquipmentSlot.HAND) return;
         Entity clicked = e.getRightClicked();
+        if (clicked.getPersistentDataContainer().has(manager.keyPreview, PersistentDataType.BYTE)) {
+            e.setCancelled(true); // editor mannequins are scenery, not playthings
+            return;
+        }
         String instance = clicked.getPersistentDataContainer()
                 .get(manager.keyInstance, PersistentDataType.STRING);
         if (instance == null) return;
@@ -118,6 +122,10 @@ public class FurnitureListener implements Listener {
     @EventHandler
     public void onAttack(PrePlayerAttackEntityEvent e) {
         Entity attacked = e.getAttacked();
+        if (attacked.getPersistentDataContainer().has(manager.keyPreview, PersistentDataType.BYTE)) {
+            e.setCancelled(true);
+            return;
+        }
         String instance = attacked.getPersistentDataContainer()
                 .get(manager.keyInstance, PersistentDataType.STRING);
         if (instance == null) return;
@@ -144,7 +152,13 @@ public class FurnitureListener implements Listener {
 
     @EventHandler
     public void onDamage(EntityDamageEvent e) {
-        if (e.getEntity().getPersistentDataContainer().has(manager.keyInstance, PersistentDataType.STRING)) {
+        var pdc = e.getEntity().getPersistentDataContainer();
+        // Every entity of ours is damage-proof: furniture parts/anchors (keyInstance), seat
+        // stands (keySeat) and editor previews (keyPreview — setInvulnerable alone doesn't
+        // stop creative players, who could kill the mannequin and pop XP out of it).
+        if (pdc.has(manager.keyInstance, PersistentDataType.STRING)
+                || pdc.has(manager.keySeat, PersistentDataType.BYTE)
+                || pdc.has(manager.keyPreview, PersistentDataType.BYTE)) {
             e.setCancelled(true);
         }
     }
@@ -185,6 +199,18 @@ public class FurnitureListener implements Listener {
     public void onEntitiesLoad(EntitiesLoadEvent e) {
         Set<String> anchorsPresent = new HashSet<>();
         for (Entity entity : e.getEntities()) {
+            // Janitor: session-scoped helpers must never survive into a loaded chunk. Editor
+            // previews (mannequin/stand) and rider-less seat stands are debris by definition
+            // here — setPersistent(false) SHOULD keep them out of the save, but a runtime
+            // entity type that ignores the flag (or a crash mid-session) must not leave a
+            // killable mannequin sitting around forever.
+            var pdc = entity.getPersistentDataContainer();
+            if (pdc.has(manager.keyPreview, PersistentDataType.BYTE)
+                    || (pdc.has(manager.keySeat, PersistentDataType.BYTE) && entity.getPassengers().isEmpty())) {
+                entity.eject();
+                entity.remove();
+                continue;
+            }
             if (entity instanceof Interaction anchor
                     && anchor.getPersistentDataContainer().has(manager.keyType, PersistentDataType.STRING)) {
                 String instance = anchor.getPersistentDataContainer()

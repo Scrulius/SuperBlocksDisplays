@@ -52,6 +52,7 @@ public class FurnitureManager {
     public final NamespacedKey keyBarriers;
     public final NamespacedKey keyYaw;
     public final NamespacedKey keySeat;
+    public final NamespacedKey keyPreview;
 
     /** Seat armor stands spawned this session (cleaned on disable; they are non-persistent). */
     private final Set<UUID> activeSeats = new HashSet<>();
@@ -73,6 +74,7 @@ public class FurnitureManager {
         this.keyBarriers = new NamespacedKey(plugin, "furniture_barriers");
         this.keyYaw = new NamespacedKey(plugin, "furniture_yaw");
         this.keySeat = new NamespacedKey(plugin, "furniture_seat");
+        this.keyPreview = new NamespacedKey(plugin, "furniture_preview");
     }
 
     public FurnitureRegistry getRegistry() { return registry; }
@@ -338,10 +340,17 @@ public class FurnitureManager {
                 }
             }
         }
-        // Safety sweep: anything else carrying this instance id near the anchor (seats, hitboxes)
+        // Safety sweep: anything else carrying this instance id near the anchor (seats, hitboxes),
+        // plus session debris that sits ON the furniture but is only tracked in memory — seat
+        // editor previews (keyPreview: mannequin + its stand) and untagged/stale seat stands.
+        // Without this, picking up a chair mid-edit left a killable mannequin floating there.
         for (Entity near : world.getNearbyEntities(loc, 4, 4, 4)) {
-            String nearInstance = near.getPersistentDataContainer().get(keyInstance, PersistentDataType.STRING);
-            if (instanceStr.equals(nearInstance) && near != anchor) {
+            if (near == anchor) continue;
+            PersistentDataContainer nearPdc = near.getPersistentDataContainer();
+            String nearInstance = nearPdc.get(keyInstance, PersistentDataType.STRING);
+            boolean debris = nearPdc.has(keyPreview, PersistentDataType.BYTE)
+                    || (nearPdc.has(keySeat, PersistentDataType.BYTE) && nearInstance == null);
+            if (instanceStr.equals(nearInstance) || debris) {
                 near.eject();
                 near.remove();
                 activeSeats.remove(near.getUniqueId());
@@ -375,34 +384,65 @@ public class FurnitureManager {
     /**
      * Remote pickup (furniture GUI): resolves the anchor by instance id — loading the chunk on
      * demand, same as purgeOwner — and reuses pickup() (ownership check, item back, sounds).
+     * Chunk entities stream in ASYNC after the chunk loads: if they aren't there yet, a chunk
+     * ticket holds the chunk and the lookup retries for up to 3s before concluding the anchor
+     * is really gone. Without the wait, a far-away live furniture would be pruned from the
+     * index as "missing" and left standing as an orphan.
      *
-     * @return true if the index changed (furniture picked up, or stale entry pruned).
+     * @param onChanged runs (on the main thread) after the index changed — GUI refresh hook.
      */
-    public boolean pickupRemote(Player player, String instance) {
+    public void pickupRemote(Player player, String instance, Runnable onChanged) {
         PlacementIndex.Placement p = index.get(instance);
-        if (p == null) return false;
+        if (p == null) return;
         if (!p.owner().equals(player.getUniqueId().toString())
                 && !player.hasPermission("superfurnitures.admin.bypass")) {
             bar(player, "Este mueble no es tuyo.", NamedTextColor.RED);
-            return false;
+            return;
         }
         World world = Bukkit.getWorld(p.world());
         if (world == null) {
             index.remove(instance);
             bar(player, "El mundo de ese mueble ya no existe; entrada retirada.", NamedTextColor.YELLOW);
-            return true;
+            onChanged.run();
+            return;
         }
         org.bukkit.Chunk chunk = world.getChunkAt(((int) Math.floor(p.x())) >> 4, ((int) Math.floor(p.z())) >> 4);
-        for (Entity ent : chunk.getEntities()) {
-            if (ent instanceof Interaction i
-                    && instance.equals(i.getPersistentDataContainer().get(keyInstance, PersistentDataType.STRING))) {
-                pickup(player, i);
-                return true;
-            }
+        chunk.addPluginChunkTicket(plugin);
+        resolveAndPickup(player, instance, chunk, 0, onChanged);
+    }
+
+    private void resolveAndPickup(Player player, String instance, org.bukkit.Chunk chunk,
+                                  int attempt, Runnable onChanged) {
+        if (!player.isOnline()) {
+            chunk.removePluginChunkTicket(plugin);
+            return;
         }
-        index.remove(instance);
-        bar(player, "Ese mueble ya no existe; entrada retirada del listado.", NamedTextColor.YELLOW);
-        return true;
+        if (chunk.isEntitiesLoaded()) {
+            try {
+                for (Entity ent : chunk.getEntities()) {
+                    if (ent instanceof Interaction i
+                            && instance.equals(i.getPersistentDataContainer().get(keyInstance, PersistentDataType.STRING))) {
+                        pickup(player, i);
+                        onChanged.run();
+                        return;
+                    }
+                }
+                // Entities ARE loaded and the anchor really isn't among them: stale entry.
+                index.remove(instance);
+                bar(player, "Ese mueble ya no existe; entrada retirada del listado.", NamedTextColor.YELLOW);
+                onChanged.run();
+            } finally {
+                chunk.removePluginChunkTicket(plugin);
+            }
+            return;
+        }
+        if (attempt >= 12) { // ~3s: give up without touching the index (never prune blind)
+            chunk.removePluginChunkTicket(plugin);
+            bar(player, "El mueble está demasiado lejos y su zona no carga; inténtalo de nuevo.", NamedTextColor.YELLOW);
+            return;
+        }
+        plugin.getServer().getScheduler().runTaskLater(plugin,
+                () -> resolveAndPickup(player, instance, chunk, attempt + 1, onChanged), 5L);
     }
 
     /**
@@ -423,8 +463,12 @@ public class FurnitureManager {
                 pruned++;
                 continue;
             }
-            // Paper loads chunk entities on demand for getEntities()
             org.bukkit.Chunk chunk = world.getChunkAt(((int) Math.floor(p.x())) >> 4, ((int) Math.floor(p.z())) >> 4);
+            if (!chunk.isEntitiesLoaded()) {
+                // Entities stream in async after the chunk loads; pruning now could orphan a
+                // LIVE furniture. Leave the entry; a re-run (or chunk-load self-heal) gets it.
+                continue;
+            }
             Interaction anchor = null;
             for (Entity ent : chunk.getEntities()) {
                 if (ent instanceof Interaction i
