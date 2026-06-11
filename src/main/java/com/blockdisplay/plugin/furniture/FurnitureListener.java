@@ -56,7 +56,7 @@ public class FurnitureListener implements Listener {
         // It IS a furniture item: never let it act as a vanilla block/item (e.g. player heads place)
         e.setCancelled(true);
 
-        boolean placed = manager.place(type, e.getPlayer(), e.getClickedBlock(), e.getBlockFace(), item);
+        boolean placed = manager.place(type, e.getPlayer(), e.getClickedBlock(), e.getBlockFace());
         if (placed && e.getPlayer().getGameMode() != org.bukkit.GameMode.CREATIVE) {
             item.setAmount(item.getAmount() - 1);
         }

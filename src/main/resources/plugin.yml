@@ -1,5 +1,5 @@
 name: SuperFurnitures
-version: '1.2.0'
+version: '1.2.1'
 main: com.blockdisplay.plugin.BlockDisplayPlugin
 api-version: '1.21'
 author: Melonzio

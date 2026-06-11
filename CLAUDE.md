@@ -7,7 +7,10 @@ con dos caras: **muebles para jugadores** (items MythicMobs → muebles displayb
 — leerlo antes de tocar nada.** Claves furniture: entities persistentes vanilla + PDC en ancla
 Interaction (el mundo es la BD, sin respawn al arrancar); MythicHook por REFLEXIÓN (no hay dep
 Maven de MythicMobs); protección vía probe de `BlockPlaceEvent` sintético (respeta WorldGuard y
-cualquier protección sin compilar contra ellas); asientos = ArmorStand marker no-persistente;
+cualquier protección sin compilar contra ellas — ⚠️ el probe lleva un ItemStack de STONE neutro,
+NUNCA el ítem MythicMobs real: MythicCrucible cancela cualquier `BlockPlaceEvent` de un ítem
+mythic sin `Options.Placeable`, lo que vetaba TODA colocación, fix v1.2.1); asientos =
+ArmorStand marker no-persistente;
 el plugin renombrado migra `plugins/SuperBlocksDisplays` → `plugins/SuperFurnitures` al arrancar.
 
 - Repo: **https://github.com/Scrulius/SuperFurnitures** (renombrado; push directo a `main`).

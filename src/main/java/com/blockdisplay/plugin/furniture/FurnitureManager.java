@@ -82,7 +82,7 @@ public class FurnitureManager {
     // ==================== PLACE ====================
 
     /** @return true if the furniture was placed (caller consumes the item). */
-    public boolean place(FurnitureType type, Player player, Block clicked, BlockFace face, ItemStack inHand) {
+    public boolean place(FurnitureType type, Player player, Block clicked, BlockFace face) {
         World world = clicked.getWorld();
 
         if (registry.isWorldDisabled(world.getName())) {
@@ -140,13 +140,13 @@ public class FurnitureManager {
         // the placement without compiling against any of them. Every shell cell is probed — a
         // footprint reaching into someone else's region must be vetoed cell by cell, not only
         // at the clicked block.
-        if (!canBuildAt(player, target, clicked, inHand)) {
+        if (!canBuildAt(player, target, clicked)) {
             bar(player, "No puedes construir aquí.", NamedTextColor.RED);
             return false;
         }
         if (shellCells != null) {
             for (Block cell : shellCells) {
-                if (!cell.equals(target) && !canBuildAt(player, cell, clicked, inHand)) {
+                if (!cell.equals(target) && !canBuildAt(player, cell, clicked)) {
                     bar(player, "El mueble invade una zona donde no puedes construir.", NamedTextColor.RED);
                     return false;
                 }
@@ -259,9 +259,13 @@ public class FurnitureManager {
     }
 
     /** Synthetic BlockPlaceEvent probe: any protection plugin can veto without a compile dep. */
-    private static boolean canBuildAt(Player player, Block cell, Block clicked, ItemStack inHand) {
+    private static boolean canBuildAt(Player player, Block cell, Block clicked) {
+        // The probe must NOT carry the real furniture item: MythicCrucible cancels any
+        // BlockPlaceEvent whose in-hand item is a mythic item without Options.Placeable,
+        // which would veto every placement. Protection plugins judge player + location,
+        // not the item, so a neutral stone keeps the probe honest.
         BlockPlaceEvent probe = new BlockPlaceEvent(cell, cell.getState(), clicked,
-                inHand, player, true, EquipmentSlot.HAND);
+                new ItemStack(Material.STONE), player, true, EquipmentSlot.HAND);
         Bukkit.getPluginManager().callEvent(probe);
         return !probe.isCancelled() && probe.canBuild();
     }
