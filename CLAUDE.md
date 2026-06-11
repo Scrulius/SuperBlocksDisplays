@@ -1,6 +1,7 @@
 # CLAUDE.md — SuperFurnitures (antes SuperBlocksDisplays)
 
-Plugin Paper 1.21.x (Java 21, **Maven**: `mvn clean package` → `target/SuperFurnitures-*.jar`)
+Plugin Paper 1.21.x (Java 21, **Maven**: `mvn clean package` → `target/SuperFurnitures-*.jar`;
+tests `mvn test`)
 con dos caras: **muebles para jugadores** (items nativos o MythicMobs → muebles displayblock,
 paquete `furniture/`, IMPLEMENTADO v1.2.0) y gestor admin de modelos block-display.com (`/bde`).
 **Diseño y decisiones cerradas en [`docs/SUPERFURNITURES_DESIGN.md`](docs/SUPERFURNITURES_DESIGN.md)
@@ -22,8 +23,27 @@ el plugin renombrado migra `plugins/SuperBlocksDisplays` → `plugins/SuperFurni
 - Motor de animación NATIVO por API de Paper (`AnimationManager`): keyframes compilados a
   `setTransformationMatrix`/`setInterpolationDuration`/`setBlock` por UUID; matriz row-major de MC
   → `new Matrix4f().set(floats).transpose()` (⚠️ único punto pendiente de verificación visual; si
-  un modelo sale deformado, quitar el transpose). Fallback por comando silencioso solo para
-  payloads no mapeables (`item:`, residuo desconocido).
+  un modelo sale deformado, quitar el transpose — el knob vive ahora en `ScaleMath.toMatrix`).
+  Fallback por comando silencioso solo para payloads no mapeables (`item:`, residuo desconocido).
+  El parsing de keyframes está extraído a **`KeyframeParser`** (puro, sin Bukkit, testeado);
+  `AnimationManager.tryParse` solo resuelve UUIDs/`createBlockData` encima.
+- **Escala de modelos (v1.6.0)**: `/bde spawn <id> <nombre> [escala]` y `/bde scale <0.1-10>
+  [nombre|nearest]` (re-summon in-place: conserva grupo/yaw/animación, invalida la animación
+  compilada — los FrameAction cachean UUIDs de piezas). Matemática en **`ScaleMath`** (pura,
+  testeada): todas las piezas viven en el origen → escalar = multiplicar los primeros 12 floats
+  de la matriz row-major (base + translación) por el factor, tanto en el SNBT del summon
+  (`scalePartSnbt`) como en los keyframes compilados (premultiplicado vía `toMatrix(vals, escala)`
+  — sin esto un modelo escalado SALTARÍA a tamaño 1 al animarse). Hitboxes authored: offsets `~N`
+  y width/height escalados (`scaleHitboxCommand`). Persiste en `spawned.yml` (`scale`, default 1.0;
+  se setea ANTES de `reconnectOrSpawn` porque va horneada en el NBT). Los muebles siguen a 1.0
+  (sobrecarga de `summonModelParts` sin escala). ⚠️ Si un modelo escalado tiene keyframes de
+  fallback (no mapeables), esos frames salen SIN escalar (warning en consola al compilar).
+- **Tests (Maven `mvn test`, JUnit 5 + Mockito 5)**: `src/test/java` cubre la matemática pura
+  (`ScaleMathTest` — escala + orientación del transpose, `KeyframeParserTest` — parsing estricto
+  con keyframe real de api_sample2, `ModelGroupTest` — countParts) y `ModelManagerTest` (librería
+  + snapshots con plugin mockeado; el inline mock maker de Mockito 5 stubea los métodos FINAL de
+  JavaPlugin como getDataFolder/getLogger, y el scheduler se mockea para correr el async inline).
+  Surefire con `-XX:+EnableDynamicAgentLoading` (silencia el warning del agente en JDK 21).
 - Persistencia admin (`/bde`): snapshot local completo en `data/<group-id>.json` — el re-spawn
   NUNCA depende de la API. Los muebles de jugadores usarán otra arquitectura: entities
   persistentes vanilla + metadata en PDC (ver diseño).

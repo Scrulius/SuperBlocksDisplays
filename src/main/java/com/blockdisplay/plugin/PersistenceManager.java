@@ -37,6 +37,7 @@ public class PersistenceManager {
         config.set(path + ".y", group.getOrigin().getY());
         config.set(path + ".z", group.getOrigin().getZ());
         config.set(path + ".yaw", group.getYawOffset());
+        config.set(path + ".scale", group.getScale());
         config.set(path + ".animating", group.isAnimating());
         config.set(path + ".loopAnim", group.isLoopAnim());
         config.set(path + ".animSpeed", group.getAnimSpeed());
@@ -100,6 +101,7 @@ public class PersistenceManager {
         double y = config.getDouble(path + ".y");
         double z = config.getDouble(path + ".z");
         float yaw = (float) config.getDouble(path + ".yaw");
+        float scale = (float) config.getDouble(path + ".scale", 1.0);
         boolean animating = config.getBoolean(path + ".animating", false);
         boolean loopAnim = config.getBoolean(path + ".loopAnim", true);
         float animSpeed = (float) config.getDouble(path + ".animSpeed", 1.0);
@@ -111,7 +113,7 @@ public class PersistenceManager {
         ModelData snapshot = plugin.getModelManager().loadSpawnedData(groupId);
         if (snapshot != null) {
             plugin.getServer().getScheduler().runTask(plugin, () ->
-                    spawnLoaded(groupId, modelId, displayName, loc, yaw, animating, loopAnim, animSpeed, animName, snapshot, false));
+                    spawnLoaded(groupId, modelId, displayName, loc, yaw, scale, animating, loopAnim, animSpeed, animName, snapshot, false));
             return true;
         }
 
@@ -120,7 +122,7 @@ public class PersistenceManager {
         plugin.getModelManager().resolveModelData(modelId).thenAccept(modelData ->
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (modelData != null) {
-                        spawnLoaded(groupId, modelId, displayName, loc, yaw, animating, loopAnim, animSpeed, animName, modelData, true);
+                        spawnLoaded(groupId, modelId, displayName, loc, yaw, scale, animating, loopAnim, animSpeed, animName, modelData, true);
                     } else {
                         plugin.getLogger().warning("Could not reload model '" + displayName + "' (" + modelId
                                 + ") - no local snapshot, and not found in library or API.");
@@ -129,7 +131,7 @@ public class PersistenceManager {
         return true;
     }
 
-    private void spawnLoaded(UUID groupId, String modelId, String displayName, Location loc, float yaw,
+    private void spawnLoaded(UUID groupId, String modelId, String displayName, Location loc, float yaw, float scale,
                              boolean animating, boolean loopAnim, float animSpeed, String animName,
                              ModelData modelData, boolean snapshotAfter) {
         // Names must be unique among active models (commands resolve by name); old saves may
@@ -144,6 +146,8 @@ public class PersistenceManager {
         }
 
         ModelGroup group = new ModelGroup(loc, groupId, modelId, finalName);
+        // Scale must be set BEFORE spawning - it is baked into the summon NBT.
+        group.setScale(scale);
         group.reconnectOrSpawn(modelData, plugin);
         group.setYaw(yaw);
         group.setLoopAnim(loopAnim);

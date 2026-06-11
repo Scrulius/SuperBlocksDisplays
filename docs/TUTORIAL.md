@@ -34,7 +34,8 @@ La library es **offline**: una vez descargado, el server nunca vuelve a depender
 Para estatuas, carteles 3D, decoración de spawn… cosas que gestionas tú directamente:
 
 ```
-/bde spawn <id|NombreLocal> <nombre>   ← lo coloca donde estás (nombre único, 2-32 chars)
+/bde spawn <id|NombreLocal> <nombre> [escala]  ← lo coloca donde estás (nombre único, 2-32
+                                         chars; escala opcional 0.1-10: 0.5 = mitad, 3 = estatua)
 /bde list                              ← todos los modelos activos
 /bde info [nombre|nearest]             ← detalles (piezas, posición, animación)
 /bde tp [nombre|nearest]               ← teletransportarte a él
@@ -42,6 +43,7 @@ Para estatuas, carteles 3D, decoración de spawn… cosas que gestionas tú dire
                                          + left/right/forward/back (relativos a TU mirada)
                                          y distancias decimales (0.1, 0.05…)
 /bde rotate <yaw> [nombre|nearest]     ← girarlo a un yaw exacto
+/bde scale <0.1-10> [nombre|nearest]   ← cambiarle el tamaño (re-summon in-place, lo demás se conserva)
 /bde remove [nombre|nearest]           ← quitarlo
 ```
 

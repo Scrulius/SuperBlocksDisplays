@@ -37,9 +37,14 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
     private static final Pattern NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]{2,32}$");
 
     private static final List<String> SUBCOMMANDS = Arrays.asList(
-            "spawn", "remove", "tp", "move", "purge", "list", "rotate", "anim", "speed", "info",
+            "spawn", "remove", "tp", "move", "purge", "list", "rotate", "scale", "anim", "speed", "info",
             "download", "library", "undownload", "clearcache", "reload", "help"
     );
+
+    // Sane bounds for the uniform model scale: below 0.1 it's invisible, above 10 one model can
+    // span dozens of blocks of client render load.
+    private static final float MIN_SCALE = 0.1f;
+    private static final float MAX_SCALE = 10.0f;
 
     private static final List<String> MOVE_DIRECTIONS = Arrays.asList(
             "up", "down", "north", "south", "east", "west", "left", "right", "forward", "back"
@@ -70,6 +75,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             case "move" -> handleMove(player, args);
             case "list" -> handleList(player);
             case "rotate" -> handleRotate(player, args);
+            case "scale" -> handleScale(player, args);
             case "anim" -> handleAnim(player, args);
             case "speed" -> handleSpeed(player, args);
             case "info" -> handleInfo(player, args);
@@ -92,12 +98,20 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
     // ========== SPAWN ==========
     private void handleSpawn(Player player, String[] args) {
         if (args.length < 3) {
-            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde spawn <model_id|library_name> <name>");
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde spawn <model_id|library_name> <name> [scale]");
             player.sendMessage(PREFIX + ChatColor.GRAY + "Name must be 2-32 characters, alphanumeric or underscores.");
             return;
         }
         String source = args[1];
         String displayName = args[2];
+
+        float scale = 1.0f;
+        if (args.length >= 4) {
+            Float parsed = parseScale(player, args[3]);
+            if (parsed == null) return;
+            scale = parsed;
+        }
+        final float finalScale = scale;
 
         // Validate name format
         if (!NAME_PATTERN.matcher(displayName).matches()) {
@@ -122,7 +136,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         ModelData libraryData = plugin.getModelManager().loadFromLibrary(source);
         if (libraryData != null) {
             player.sendMessage(PREFIX + ChatColor.YELLOW + "Spawning from library: " + ChatColor.WHITE + source);
-            spawnModel(player, libraryData, source, displayName);
+            spawnModel(player, libraryData, source, displayName, finalScale);
             return;
         }
 
@@ -135,14 +149,31 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                     player.sendMessage(PREFIX + ChatColor.RED + "Failed to load model. Check the ID is valid and not expired.");
                     return;
                 }
-                spawnModel(player, modelData, source, displayName);
+                spawnModel(player, modelData, source, displayName, finalScale);
             });
         });
     }
 
-    private void spawnModel(Player player, ModelData modelData, String modelId, String displayName) {
+    /** Parse and validate a scale argument; null = invalid (the player was already told). */
+    private Float parseScale(Player player, String raw) {
+        float scale;
+        try {
+            scale = Float.parseFloat(raw);
+        } catch (NumberFormatException e) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Invalid scale. Use a number, e.g. 0.5 or 2");
+            return null;
+        }
+        if (scale < MIN_SCALE || scale > MAX_SCALE) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Scale must be between " + MIN_SCALE + " and " + MAX_SCALE + ".");
+            return null;
+        }
+        return scale;
+    }
+
+    private void spawnModel(Player player, ModelData modelData, String modelId, String displayName, float scale) {
         Location loc = player.getLocation();
         ModelGroup group = new ModelGroup(loc, modelId, displayName);
+        group.setScale(scale);
         group.spawn(modelData, plugin);
         plugin.getActiveGroups().put(group.getGroupId(), group);
 
@@ -156,8 +187,9 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         plugin.getModelManager().saveSpawnedData(group.getGroupId(), modelData);
         plugin.getPersistenceManager().saveGroup(group);
 
+        String scaleSuffix = (scale != 1.0f) ? ChatColor.AQUA + " x" + scale : "";
         player.sendMessage(PREFIX + ChatColor.GREEN + "Model " + ChatColor.WHITE + displayName
-                + ChatColor.GREEN + " spawned! (" + ChatColor.GRAY + modelId + ChatColor.GREEN + ")");
+                + ChatColor.GREEN + " spawned! (" + ChatColor.GRAY + modelId + ChatColor.GREEN + ")" + scaleSuffix);
 
         if (modelData.hasAnimations() && plugin.isAutoPlayAnimations()) {
             player.sendMessage(PREFIX + ChatColor.AQUA + "✦ This model has animations! (auto-playing)");
@@ -344,6 +376,47 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    // ========== SCALE ==========
+    private void handleScale(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde scale <" + MIN_SCALE + "-" + MAX_SCALE + "> [name|nearest]");
+            return;
+        }
+
+        Float parsed = parseScale(player, args[1]);
+        if (parsed == null) return;
+        float scale = parsed;
+
+        ModelGroup target = (args.length >= 3) ? resolveGroupOrNearest(args[2], player) : getNearestGroup(player);
+        if (target == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "No model found. Specify a name or stand near a model.");
+            return;
+        }
+        if (target.getScale() == scale) {
+            player.sendMessage(PREFIX + ChatColor.YELLOW + "Model '" + target.getDisplayName() + "' is already at x" + scale + ".");
+            return;
+        }
+        ModelData data = target.getModelData();
+        if (data == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Model data not loaded yet; try again in a moment.");
+            return;
+        }
+
+        // The scale is baked into the summon NBT, so rescaling = remove the parts and re-summon
+        // them with the new factor. The group (id, name, origin, yaw, anim state) survives intact.
+        target.remove(plugin);
+        target.setScale(scale);
+        // spawn() re-applies the group's yaw to each part as it registers (tagPart catch-up).
+        target.spawn(data, plugin);
+        // Compiled frames hold the old part UUIDs and the old scale - recompile from scratch.
+        plugin.getAnimationManager().invalidateCompiled(target.getGroupId());
+        plugin.getAnimationManager().resetTick(target.getGroupId());
+        plugin.getPersistenceManager().saveGroup(target);
+
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Model '" + ChatColor.WHITE + target.getDisplayName()
+                + ChatColor.GREEN + "' rescaled to " + ChatColor.WHITE + "x" + scale);
+    }
+
     // ========== ANIM ==========
     private void handleAnim(Player player, String[] args) {
         if (args.length < 2) {
@@ -503,6 +576,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.GRAY + " World: " + ChatColor.WHITE + loc.getWorld().getName());
         player.sendMessage(ChatColor.GRAY + " Parts: " + ChatColor.WHITE + target.getPartCount());
         player.sendMessage(ChatColor.GRAY + " Yaw: " + ChatColor.WHITE + target.getYawOffset() + "°");
+        player.sendMessage(ChatColor.GRAY + " Scale: " + ChatColor.WHITE + "x" + target.getScale());
 
         if (data != null && data.hasAnimations()) {
             boolean multi = data.getAnimationNames().size() > 1;
@@ -654,12 +728,13 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.DARK_GRAY + "────────────────────────────────");
         player.sendMessage(PREFIX + ChatColor.GOLD + "SuperBlocksDisplays " + ChatColor.GRAY + "by Melonzio");
         player.sendMessage(ChatColor.DARK_GRAY + "────────────────────────────────");
-        player.sendMessage(ChatColor.YELLOW + " /bde spawn <id|lib> <name>" + ChatColor.GRAY + " - Spawn a model");
+        player.sendMessage(ChatColor.YELLOW + " /bde spawn <id|lib> <name> [scale]" + ChatColor.GRAY + " - Spawn a model");
         player.sendMessage(ChatColor.YELLOW + " /bde remove [name|nearest]" + ChatColor.GRAY + " - Remove model");
         player.sendMessage(ChatColor.YELLOW + " /bde tp [name|nearest]" + ChatColor.GRAY + " - Teleport to model");
         player.sendMessage(ChatColor.YELLOW + " /bde move <dir> <dist> [name]" + ChatColor.GRAY + " - Nudge model precisely");
         player.sendMessage(ChatColor.YELLOW + " /bde list" + ChatColor.GRAY + " - List all active models");
         player.sendMessage(ChatColor.YELLOW + " /bde rotate <yaw> [name|nearest]" + ChatColor.GRAY + " - Rotate a model");
+        player.sendMessage(ChatColor.YELLOW + " /bde scale <" + MIN_SCALE + "-" + MAX_SCALE + "> [name|nearest]" + ChatColor.GRAY + " - Resize a model");
         player.sendMessage(ChatColor.YELLOW + " /bde anim play <loop|once> [name] [anim]" + ChatColor.GRAY + " - Play animation");
         player.sendMessage(ChatColor.YELLOW + " /bde anim stop [name|nearest]" + ChatColor.GRAY + " - Stop animation");
         player.sendMessage(ChatColor.YELLOW + " /bde anim list [name|nearest]" + ChatColor.GRAY + " - List animations");
@@ -707,6 +782,15 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             }
             case "rotate" -> {
                 if (args.length == 2) return Arrays.asList("0", "45", "90", "135", "180", "225", "270", "315");
+                if (args.length == 3) {
+                    List<String> options = new ArrayList<>();
+                    options.add("nearest");
+                    options.addAll(getGroupNameSuggestions());
+                    return filterStartsWith(options, args[2]);
+                }
+            }
+            case "scale" -> {
+                if (args.length == 2) return Arrays.asList("0.25", "0.5", "0.75", "1", "1.5", "2", "3", "5");
                 if (args.length == 3) {
                     List<String> options = new ArrayList<>();
                     options.add("nearest");
@@ -763,6 +847,7 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                     return filterStartsWith(options, args[1]);
                 }
                 if (args.length == 3) return Collections.singletonList("<name>");
+                if (args.length == 4) return filterStartsWith(Arrays.asList("0.25", "0.5", "0.75", "1", "1.5", "2", "3", "5"), args[3]);
             }
             case "download" -> {
                 if (args.length == 2) return Collections.singletonList("<model_id>");

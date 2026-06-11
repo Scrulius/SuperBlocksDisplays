@@ -30,6 +30,9 @@ public class ModelGroup {
     private final Map<String, List<UUID>> partsByTag = new HashMap<>();
     private Location origin;
     private float yawOffset = 0;
+    // Uniform scale baked into the part matrices at summon time (and premultiplied into compiled
+    // animation frames). Fixed at spawn; /bde scale re-summons the parts with the new factor.
+    private float scale = 1.0f;
     private ModelData modelData;
     private boolean animating = false;
     private boolean ready = false;
@@ -131,7 +134,7 @@ public class ModelGroup {
         if (origin.getWorld() == null) return;
 
         NamespacedKey groupKey = new NamespacedKey(plugin, "group_id");
-        List<UUID> intended = summonModelParts(modelData, origin, plugin, e -> tagPart(e, groupKey));
+        List<UUID> intended = summonModelParts(modelData, origin, scale, plugin, e -> tagPart(e, groupKey));
 
         // Mark as ready after a short delay so all entities are fully registered
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> this.ready = true, 3L);
@@ -148,6 +151,15 @@ public class ModelGroup {
      * @return the intended UUIDs of every summoned entity.
      */
     public static List<UUID> summonModelParts(ModelData modelData, Location origin,
+                                              BlockDisplayPlugin plugin, java.util.function.Consumer<Entity> onSpawned) {
+        return summonModelParts(modelData, origin, 1.0f, plugin, onSpawned);
+    }
+
+    /**
+     * Same, with a uniform scale factor baked into every part's transformation matrix (and into
+     * the authored hitboxes' offsets and width/height). 1.0 = the model exactly as authored.
+     */
+    public static List<UUID> summonModelParts(ModelData modelData, Location origin, float scale,
                                               BlockDisplayPlugin plugin, java.util.function.Consumer<Entity> onSpawned) {
         List<UUID> intended = new ArrayList<>();
         World world = origin.getWorld();
@@ -171,7 +183,8 @@ public class ModelGroup {
                     }
 
                     UUID partUuid = UUID.randomUUID();
-                    String nbt = snbt.replaceFirst("\\{id:\"minecraft:[^\"]+\",?", "{");
+                    String nbt = ScaleMath.scalePartSnbt(snbt, scale);
+                    nbt = nbt.replaceFirst("\\{id:\"minecraft:[^\"]+\",?", "{");
                     nbt = nbt.replaceFirst("\\{", "{" + uuidSnbt(partUuid) + ",");
 
                     String cmd = String.format(Locale.US,
@@ -190,7 +203,8 @@ public class ModelGroup {
             if (modelData.hasHitbox()) {
                 for (String hitboxCmd : modelData.content.hitbox) {
                     UUID hitboxUuid = UUID.randomUUID();
-                    String modified = hitboxCmd.contains("{") ? hitboxCmd : hitboxCmd + "{}";
+                    String modified = ScaleMath.scaleHitboxCommand(hitboxCmd, scale);
+                    modified = modified.contains("{") ? modified : modified + "{}";
                     modified = modified.replaceFirst("\\{", "{" + uuidSnbt(hitboxUuid) + ",");
 
                     String cmd = String.format(Locale.US,
@@ -319,6 +333,8 @@ public class ModelGroup {
     public boolean isAnimating() { return animating; }
     public void setAnimating(boolean animating) { this.animating = animating; }
     public float getYawOffset() { return yawOffset; }
+    public float getScale() { return scale; }
+    public void setScale(float scale) { this.scale = scale; }
     public float getAnimSpeed() { return animSpeed; }
     public void setAnimSpeed(float animSpeed) { this.animSpeed = animSpeed; }
     public boolean isLoopAnim() { return loopAnim; }
