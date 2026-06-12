@@ -37,9 +37,12 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
     private static final Pattern NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]{2,32}$");
 
     private static final List<String> SUBCOMMANDS = Arrays.asList(
-            "spawn", "remove", "tp", "move", "purge", "list", "rotate", "scale", "anim", "speed", "info",
+            "spawn", "remove", "tp", "tphere", "move", "purge", "list", "near", "rotate", "scale",
+            "glow", "brightness", "clickbox", "action", "clone", "rename", "anim", "speed", "info",
             "download", "library", "undownload", "clearcache", "reload", "help"
     );
+
+    private static final int MAX_ACTIONS = 10;
 
     // Sane bounds for the uniform model scale: below 0.1 it's invisible, above 10 one model can
     // span dozens of blocks of client render load.
@@ -74,8 +77,16 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             case "tp" -> handleTp(player, args);
             case "move" -> handleMove(player, args);
             case "list" -> handleList(player);
+            case "near" -> handleNear(player, args);
             case "rotate" -> handleRotate(player, args);
             case "scale" -> handleScale(player, args);
+            case "glow" -> handleGlow(player, args);
+            case "brightness" -> handleBrightness(player, args);
+            case "clickbox" -> handleClickbox(player, args);
+            case "action" -> handleAction(player, args);
+            case "clone" -> handleClone(player, args);
+            case "rename" -> handleRename(player, args);
+            case "tphere" -> handleTphere(player, args);
             case "anim" -> handleAnim(player, args);
             case "speed" -> handleSpeed(player, args);
             case "info" -> handleInfo(player, args);
@@ -417,6 +428,361 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
                 + ChatColor.GREEN + "' rescaled to " + ChatColor.WHITE + "x" + scale);
     }
 
+    // ========== GLOW ==========
+    private void handleGlow(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde glow <color|#RRGGBB|off> [name|nearest]");
+            player.sendMessage(PREFIX + ChatColor.GRAY + "Colors: " + String.join(", ", GlowColors.names()));
+            return;
+        }
+        String raw = args[1];
+        boolean off = raw.equalsIgnoreCase("off");
+        if (!off && GlowColors.resolve(raw) == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Unknown color '" + raw + "'. Use a name, #RRGGBB hex, or 'off'.");
+            player.sendMessage(PREFIX + ChatColor.GRAY + "Colors: " + String.join(", ", GlowColors.names()));
+            return;
+        }
+
+        ModelGroup target = (args.length >= 3) ? resolveGroupOrNearest(args[2], player) : getNearestGroup(player);
+        if (target == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "No model found. Specify a name or stand near a model.");
+            return;
+        }
+        target.setGlowColor(off ? null : raw);
+        target.applyAppearance();
+        plugin.getPersistenceManager().saveGroup(target);
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Model '" + ChatColor.WHITE + target.getDisplayName()
+                + ChatColor.GREEN + "' glow " + (off ? ChatColor.YELLOW + "removed" : ChatColor.WHITE + raw));
+    }
+
+    // ========== BRIGHTNESS ==========
+    private void handleBrightness(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde brightness <0-15|auto> [name|nearest]");
+            player.sendMessage(PREFIX + ChatColor.GRAY + "15 = always fully lit (night-proof signs/statues); auto = world lighting.");
+            return;
+        }
+        int level;
+        if (args[1].equalsIgnoreCase("auto")) {
+            level = -1;
+        } else {
+            try {
+                level = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                player.sendMessage(PREFIX + ChatColor.RED + "Invalid brightness. Use 0-15 or 'auto'.");
+                return;
+            }
+            if (level < 0 || level > 15) {
+                player.sendMessage(PREFIX + ChatColor.RED + "Brightness must be between 0 and 15 (or 'auto').");
+                return;
+            }
+        }
+
+        ModelGroup target = (args.length >= 3) ? resolveGroupOrNearest(args[2], player) : getNearestGroup(player);
+        if (target == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "No model found. Specify a name or stand near a model.");
+            return;
+        }
+        target.setBrightness(level);
+        target.applyAppearance();
+        plugin.getPersistenceManager().saveGroup(target);
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Model '" + ChatColor.WHITE + target.getDisplayName()
+                + ChatColor.GREEN + "' brightness set to " + ChatColor.WHITE + (level < 0 ? "auto" : level));
+    }
+
+    // ========== CLICKBOX ==========
+    private void handleClickbox(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde clickbox <width> <height> [name|nearest]  |  /bde clickbox off [name]");
+            player.sendMessage(PREFIX + ChatColor.GRAY + "An invisible click target at the model's origin, for /bde action.");
+            return;
+        }
+
+        if (args[1].equalsIgnoreCase("off")) {
+            ModelGroup target = (args.length >= 3) ? resolveGroupOrNearest(args[2], player) : getNearestGroup(player);
+            if (target == null) {
+                player.sendMessage(PREFIX + ChatColor.RED + "No model found.");
+                return;
+            }
+            target.setClickboxSize(0, 0);
+            target.removeClickbox();
+            plugin.getPersistenceManager().saveGroup(target);
+            player.sendMessage(PREFIX + ChatColor.GREEN + "Clickbox of '" + target.getDisplayName() + "' removed.");
+            return;
+        }
+
+        if (args.length < 3) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde clickbox <width> <height> [name|nearest]");
+            return;
+        }
+        float width, height;
+        try {
+            width = Float.parseFloat(args[1]);
+            height = Float.parseFloat(args[2]);
+        } catch (NumberFormatException e) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Invalid size. Use numbers, e.g. /bde clickbox 1.5 2");
+            return;
+        }
+        if (width < 0.25f || width > 16 || height < 0.25f || height > 16) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Width and height must be between 0.25 and 16.");
+            return;
+        }
+
+        ModelGroup target = (args.length >= 4) ? resolveGroupOrNearest(args[3], player) : getNearestGroup(player);
+        if (target == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "No model found. Specify a name or stand near a model.");
+            return;
+        }
+        target.setClickboxSize(width, height);
+        target.spawnClickbox(plugin);
+        plugin.getPersistenceManager().saveGroup(target);
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Clickbox of '" + ChatColor.WHITE + target.getDisplayName()
+                + ChatColor.GREEN + "' set to " + ChatColor.WHITE + width + " x " + height);
+        if (target.getActions().isEmpty()) {
+            player.sendMessage(PREFIX + ChatColor.GRAY + "Now add actions: /bde action " + target.getDisplayName() + " add ...");
+        }
+    }
+
+    // ========== ACTION ==========
+    private void handleAction(Player player, String[] args) {
+        if (args.length < 3) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde action <name|nearest> <add|list|remove|clear> ...");
+            player.sendMessage(PREFIX + ChatColor.GRAY + " add console <cmd>   ← run as console ({player}, {model}, {x},{y},{z})");
+            player.sendMessage(PREFIX + ChatColor.GRAY + " add player <cmd>    ← run as the clicking player");
+            player.sendMessage(PREFIX + ChatColor.GRAY + " add anim <once|loop|stop> ← drive the model's animation");
+            return;
+        }
+
+        ModelGroup target = resolveGroupOrNearest(args[1], player);
+        if (target == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Model '" + args[1] + "' not found.");
+            return;
+        }
+
+        switch (args[2].toLowerCase()) {
+            case "add" -> {
+                if (args.length < 5) {
+                    player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde action " + target.getDisplayName()
+                            + " add <console|player|anim> <command or once|loop|stop>");
+                    return;
+                }
+                if (target.getActions().size() >= MAX_ACTIONS) {
+                    player.sendMessage(PREFIX + ChatColor.RED + "This model already has " + MAX_ACTIONS + " actions.");
+                    return;
+                }
+                String payload = String.join(" ", Arrays.copyOfRange(args, 4, args.length));
+                ModelAction action = ModelAction.parse(args[3] + ": " + payload);
+                if (action == null) {
+                    player.sendMessage(PREFIX + ChatColor.RED + "Invalid action. Types: console/player (a command) or anim <once|loop|stop>.");
+                    return;
+                }
+                if (action.type() == ModelAction.Type.ANIM
+                        && (target.getModelData() == null || !target.getModelData().hasAnimations())) {
+                    player.sendMessage(PREFIX + ChatColor.RED + "This model has no animations to trigger.");
+                    return;
+                }
+                target.getActions().add(action);
+                plugin.getPersistenceManager().saveGroup(target);
+                player.sendMessage(PREFIX + ChatColor.GREEN + "Action #" + target.getActions().size()
+                        + " added to '" + ChatColor.WHITE + target.getDisplayName() + ChatColor.GREEN + "': "
+                        + ChatColor.GRAY + action.serialize());
+                if (!hasClickTarget(target)) {
+                    player.sendMessage(PREFIX + ChatColor.YELLOW + "⚠ This model has nothing to click yet — give it a clickbox: "
+                            + ChatColor.WHITE + "/bde clickbox <width> <height> " + target.getDisplayName());
+                }
+            }
+            case "list" -> {
+                if (target.getActions().isEmpty()) {
+                    player.sendMessage(PREFIX + ChatColor.YELLOW + "Model '" + target.getDisplayName() + "' has no click-actions.");
+                    return;
+                }
+                player.sendMessage(PREFIX + ChatColor.GOLD + "Click-actions of '" + target.getDisplayName()
+                        + "' (" + target.getActions().size() + "):");
+                int i = 1;
+                for (ModelAction a : target.getActions()) {
+                    player.sendMessage(ChatColor.GRAY + " " + (i++) + ". " + ChatColor.WHITE + a.serialize());
+                }
+                if (!hasClickTarget(target)) {
+                    player.sendMessage(PREFIX + ChatColor.YELLOW + "⚠ No clickbox/hitbox — actions can't fire. Use /bde clickbox.");
+                }
+            }
+            case "remove" -> {
+                if (args.length < 4) {
+                    player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde action " + target.getDisplayName() + " remove <n>");
+                    return;
+                }
+                int n;
+                try {
+                    n = Integer.parseInt(args[3]);
+                } catch (NumberFormatException e) {
+                    player.sendMessage(PREFIX + ChatColor.RED + "Invalid number. Use the index from /bde action ... list");
+                    return;
+                }
+                if (n < 1 || n > target.getActions().size()) {
+                    player.sendMessage(PREFIX + ChatColor.RED + "No action #" + n + " (model has " + target.getActions().size() + ").");
+                    return;
+                }
+                ModelAction removed = target.getActions().remove(n - 1);
+                plugin.getPersistenceManager().saveGroup(target);
+                player.sendMessage(PREFIX + ChatColor.GREEN + "Removed action #" + n + ": " + ChatColor.GRAY + removed.serialize());
+            }
+            case "clear" -> {
+                int count = target.getActions().size();
+                target.getActions().clear();
+                plugin.getPersistenceManager().saveGroup(target);
+                player.sendMessage(PREFIX + ChatColor.GREEN + "Cleared " + count + " action(s) of '" + target.getDisplayName() + "'.");
+            }
+            default -> player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde action <name|nearest> <add|list|remove|clear> ...");
+        }
+    }
+
+    /** Whether the model has anything a player can actually right-click (clickbox or authored hitbox). */
+    private boolean hasClickTarget(ModelGroup group) {
+        if (group.getClickboxWidth() > 0 && group.getClickboxHeight() > 0) return true;
+        ModelData data = group.getModelData();
+        return data != null && data.hasHitbox();
+    }
+
+    // ========== CLONE ==========
+    private void handleClone(Player player, String[] args) {
+        if (args.length < 3) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde clone <name|nearest> <new_name>");
+            player.sendMessage(PREFIX + ChatColor.GRAY + "Copies the model (scale, glow, brightness, clickbox, actions) to where you stand.");
+            return;
+        }
+        ModelGroup source = resolveGroupOrNearest(args[1], player);
+        if (source == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Model '" + args[1] + "' not found.");
+            return;
+        }
+        ModelData data = source.getModelData();
+        if (data == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Model data not loaded yet; try again in a moment.");
+            return;
+        }
+        String newName = args[2];
+        if (!NAME_PATTERN.matcher(newName).matches()) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Invalid name! Use 2-32 characters: letters, numbers, and underscores only.");
+            return;
+        }
+        if (plugin.findGroupByName(newName) != null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "A model named '" + newName + "' already exists. Choose another name.");
+            return;
+        }
+        int maxModels = plugin.getMaxModels();
+        if (maxModels > 0 && plugin.getActiveGroups().size() >= maxModels) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Model limit reached (" + maxModels + "). Remove a model first.");
+            return;
+        }
+
+        ModelGroup clone = new ModelGroup(player.getLocation(), source.getModelId(), newName);
+        clone.setScale(source.getScale());
+        clone.setYaw(source.getYawOffset());
+        clone.setGlowColor(source.getGlowColor());
+        clone.setBrightness(source.getBrightness());
+        clone.setClickboxSize(source.getClickboxWidth(), source.getClickboxHeight());
+        clone.getActions().addAll(source.getActions());
+        clone.setAnimSpeed(source.getAnimSpeed());
+        clone.setLoopAnim(source.isLoopAnim());
+        clone.setCurrentAnim(source.getCurrentAnim());
+        clone.spawn(data, plugin);
+        if (source.isAnimating() && data.hasAnimations()) {
+            clone.setAnimating(true);
+        }
+        plugin.getActiveGroups().put(clone.getGroupId(), clone);
+        plugin.getModelManager().saveSpawnedData(clone.getGroupId(), data);
+        plugin.getPersistenceManager().saveGroup(clone);
+
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Cloned '" + ChatColor.WHITE + source.getDisplayName()
+                + ChatColor.GREEN + "' as '" + ChatColor.WHITE + newName + ChatColor.GREEN + "' here.");
+    }
+
+    // ========== RENAME ==========
+    private void handleRename(Player player, String[] args) {
+        if (args.length < 3) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Usage: /bde rename <name> <new_name>");
+            return;
+        }
+        ModelGroup target = resolveGroupOrNearest(args[1], player);
+        if (target == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Model '" + args[1] + "' not found.");
+            return;
+        }
+        String newName = args[2];
+        if (!NAME_PATTERN.matcher(newName).matches()) {
+            player.sendMessage(PREFIX + ChatColor.RED + "Invalid name! Use 2-32 characters: letters, numbers, and underscores only.");
+            return;
+        }
+        if (plugin.findGroupByName(newName) != null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "A model named '" + newName + "' already exists.");
+            return;
+        }
+        String oldName = target.getDisplayName();
+        target.setDisplayName(newName);
+        plugin.getPersistenceManager().saveGroup(target);
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Model '" + ChatColor.WHITE + oldName
+                + ChatColor.GREEN + "' renamed to '" + ChatColor.WHITE + newName + ChatColor.GREEN + "'.");
+    }
+
+    // ========== TPHERE ==========
+    private void handleTphere(Player player, String[] args) {
+        ModelGroup target = (args.length >= 2) ? resolveGroupOrNearest(args[1], player) : getNearestGroup(player);
+        if (target == null) {
+            player.sendMessage(PREFIX + ChatColor.RED + "No model found. Specify a name or stand near a model.");
+            return;
+        }
+        Location to = player.getLocation();
+        Location from = target.getOrigin();
+        if (!to.getWorld().equals(from.getWorld())) {
+            player.sendMessage(PREFIX + ChatColor.RED + "The model is in another world ('" + from.getWorld().getName()
+                    + "'); cross-world moves aren't supported.");
+            return;
+        }
+        target.move(to.getX() - from.getX(), to.getY() - from.getY(), to.getZ() - from.getZ());
+        // Compiled fallback commands bake the origin in; recompile if this model ever uses them.
+        plugin.getAnimationManager().invalidateCompiled(target.getGroupId());
+        plugin.getPersistenceManager().saveGroup(target);
+        player.sendMessage(PREFIX + ChatColor.GREEN + "Model '" + ChatColor.WHITE + target.getDisplayName()
+                + ChatColor.GREEN + "' moved to you.");
+    }
+
+    // ========== NEAR ==========
+    private void handleNear(Player player, String[] args) {
+        int radius = 20;
+        if (args.length >= 2) {
+            try {
+                radius = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                player.sendMessage(PREFIX + ChatColor.RED + "Invalid radius. Use a number (5-200).");
+                return;
+            }
+        }
+        final int r = Math.max(5, Math.min(200, radius));
+
+        Location here = player.getLocation();
+        List<ModelGroup> nearby = plugin.getActiveGroups().values().stream()
+                .filter(g -> here.getWorld().equals(g.getOrigin().getWorld()))
+                .filter(g -> g.getOrigin().distanceSquared(here) <= (double) r * r)
+                .sorted((a, b) -> Double.compare(a.getOrigin().distanceSquared(here), b.getOrigin().distanceSquared(here)))
+                .toList();
+
+        if (nearby.isEmpty()) {
+            player.sendMessage(PREFIX + ChatColor.YELLOW + "No models within " + r + " blocks.");
+            return;
+        }
+        player.sendMessage(PREFIX + ChatColor.GOLD + "Models within " + r + " blocks (" + nearby.size() + "):");
+        for (ModelGroup g : nearby) {
+            double dist = Math.sqrt(g.getOrigin().distanceSquared(here));
+            TextComponent line = new TextComponent(
+                    ChatColor.WHITE + " " + g.getDisplayName() + " "
+                    + ChatColor.GRAY + String.format("%.1fm", dist) + " "
+                    + ChatColor.DARK_GRAY + "[" + ChatColor.GREEN + "tp" + ChatColor.DARK_GRAY + "]");
+            line.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/bde tp " + g.getDisplayName()));
+            line.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text("Click to teleport")));
+            player.spigot().sendMessage(line);
+        }
+    }
+
     // ========== ANIM ==========
     private void handleAnim(Player player, String[] args) {
         if (args.length < 2) {
@@ -577,6 +943,20 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.GRAY + " Parts: " + ChatColor.WHITE + target.getPartCount());
         player.sendMessage(ChatColor.GRAY + " Yaw: " + ChatColor.WHITE + target.getYawOffset() + "°");
         player.sendMessage(ChatColor.GRAY + " Scale: " + ChatColor.WHITE + "x" + target.getScale());
+        if (target.getGlowColor() != null) {
+            player.sendMessage(ChatColor.GRAY + " Glow: " + ChatColor.WHITE + target.getGlowColor());
+        }
+        if (target.getBrightness() >= 0) {
+            player.sendMessage(ChatColor.GRAY + " Brightness: " + ChatColor.WHITE + target.getBrightness());
+        }
+        if (target.getClickboxWidth() > 0) {
+            player.sendMessage(ChatColor.GRAY + " Clickbox: " + ChatColor.WHITE
+                    + target.getClickboxWidth() + " x " + target.getClickboxHeight());
+        }
+        if (!target.getActions().isEmpty()) {
+            player.sendMessage(ChatColor.GRAY + " Actions: " + ChatColor.WHITE + target.getActions().size()
+                    + ChatColor.DARK_GRAY + " (/bde action " + target.getDisplayName() + " list)");
+        }
 
         if (data != null && data.hasAnimations()) {
             boolean multi = data.getAnimationNames().size() > 1;
@@ -735,6 +1115,16 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + " /bde list" + ChatColor.GRAY + " - List all active models");
         player.sendMessage(ChatColor.YELLOW + " /bde rotate <yaw> [name|nearest]" + ChatColor.GRAY + " - Rotate a model");
         player.sendMessage(ChatColor.YELLOW + " /bde scale <" + MIN_SCALE + "-" + MAX_SCALE + "> [name|nearest]" + ChatColor.GRAY + " - Resize a model");
+        player.sendMessage(ChatColor.YELLOW + " /bde tphere [name|nearest]" + ChatColor.GRAY + " - Bring a model to you");
+        player.sendMessage(ChatColor.YELLOW + " /bde near [radius]" + ChatColor.GRAY + " - List models around you");
+        player.sendMessage(ChatColor.YELLOW + " /bde clone <name> <new_name>" + ChatColor.GRAY + " - Duplicate a model here");
+        player.sendMessage(ChatColor.YELLOW + " /bde rename <name> <new_name>" + ChatColor.GRAY + " - Rename a model");
+        player.sendMessage(ChatColor.DARK_GRAY + "────────────────────────────────");
+        player.sendMessage(PREFIX + ChatColor.GOLD + "Looks & interactivity");
+        player.sendMessage(ChatColor.YELLOW + " /bde glow <color|#hex|off> [name]" + ChatColor.GRAY + " - Glow outline");
+        player.sendMessage(ChatColor.YELLOW + " /bde brightness <0-15|auto> [name]" + ChatColor.GRAY + " - Night-proof lighting");
+        player.sendMessage(ChatColor.YELLOW + " /bde clickbox <w> <h> [name]" + ChatColor.GRAY + " - Invisible click target");
+        player.sendMessage(ChatColor.YELLOW + " /bde action <name> add|list|remove|clear" + ChatColor.GRAY + " - Click-actions");
         player.sendMessage(ChatColor.YELLOW + " /bde anim play <loop|once> [name] [anim]" + ChatColor.GRAY + " - Play animation");
         player.sendMessage(ChatColor.YELLOW + " /bde anim stop [name|nearest]" + ChatColor.GRAY + " - Stop animation");
         player.sendMessage(ChatColor.YELLOW + " /bde anim list [name|nearest]" + ChatColor.GRAY + " - List animations");
@@ -762,13 +1152,50 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
         String action = args[0].toLowerCase();
 
         switch (action) {
-            case "remove", "info", "tp" -> {
+            case "remove", "info", "tp", "tphere" -> {
                 if (args.length == 2) {
                     List<String> options = new ArrayList<>();
                     options.add("nearest");
                     options.addAll(getGroupNameSuggestions());
                     return filterStartsWith(options, args[1]);
                 }
+            }
+            case "glow" -> {
+                if (args.length == 2) {
+                    List<String> options = new ArrayList<>(GlowColors.names());
+                    options.add("off");
+                    return filterStartsWith(options, args[1]);
+                }
+                if (args.length == 3) return nearestPlusNames(args[2]);
+            }
+            case "brightness" -> {
+                if (args.length == 2) return filterStartsWith(Arrays.asList("auto", "15", "10", "5", "0"), args[1]);
+                if (args.length == 3) return nearestPlusNames(args[2]);
+            }
+            case "clickbox" -> {
+                if (args.length == 2) return filterStartsWith(Arrays.asList("off", "1", "1.5", "2"), args[1]);
+                if (args.length == 3 && !args[1].equalsIgnoreCase("off")) {
+                    return filterStartsWith(Arrays.asList("1", "1.5", "2", "3"), args[2]);
+                }
+                if (args.length == 3) return nearestPlusNames(args[2]);
+                if (args.length == 4) return nearestPlusNames(args[3]);
+            }
+            case "action" -> {
+                if (args.length == 2) return nearestPlusNames(args[1]);
+                if (args.length == 3) return filterStartsWith(Arrays.asList("add", "list", "remove", "clear"), args[2]);
+                if (args.length == 4 && args[2].equalsIgnoreCase("add")) {
+                    return filterStartsWith(Arrays.asList("console", "player", "anim"), args[3]);
+                }
+                if (args.length == 5 && args[2].equalsIgnoreCase("add") && args[3].equalsIgnoreCase("anim")) {
+                    return filterStartsWith(Arrays.asList("once", "loop", "stop"), args[4]);
+                }
+            }
+            case "clone", "rename" -> {
+                if (args.length == 2) return nearestPlusNames(args[1]);
+                if (args.length == 3) return Collections.singletonList("<new_name>");
+            }
+            case "near" -> {
+                if (args.length == 2) return Arrays.asList("10", "20", "50", "100");
             }
             case "move" -> {
                 if (args.length == 2) return filterStartsWith(MOVE_DIRECTIONS, args[1]);
@@ -920,6 +1347,13 @@ public class BdeCommand implements CommandExecutor, TabCompleter {
             }
         }
         return null;
+    }
+
+    private List<String> nearestPlusNames(String prefix) {
+        List<String> options = new ArrayList<>();
+        options.add("nearest");
+        options.addAll(getGroupNameSuggestions());
+        return filterStartsWith(options, prefix);
     }
 
     private List<String> getGroupNameSuggestions() {

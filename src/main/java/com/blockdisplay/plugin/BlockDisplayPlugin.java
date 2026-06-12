@@ -77,6 +77,9 @@ public class BlockDisplayPlugin extends JavaPlugin {
         getCommand("bde").setExecutor(bdeCommand);
         getCommand("bde").setTabCompleter(bdeCommand);
 
+        // Click-actions of interactive admin models (/bde action + clickbox / authored hitboxes)
+        getServer().getPluginManager().registerEvents(new ModelInteractListener(this), this);
+
         // ---- Furniture module ----
         MythicHook mythicHook = new MythicHook(this);
         FurnitureItems furnitureItems = new FurnitureItems(this);

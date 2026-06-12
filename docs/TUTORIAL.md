@@ -44,8 +44,36 @@ Para estatuas, carteles 3D, decoración de spawn… cosas que gestionas tú dire
                                          y distancias decimales (0.1, 0.05…)
 /bde rotate <yaw> [nombre|nearest]     ← girarlo a un yaw exacto
 /bde scale <0.1-10> [nombre|nearest]   ← cambiarle el tamaño (re-summon in-place, lo demás se conserva)
+/bde tphere [nombre|nearest]           ← traerte el modelo a donde estás (mismo mundo)
+/bde near [radio]                      ← modelos cerca de ti, clicables para tp (5-200, default 20)
+/bde clone <nombre> <nuevo>            ← duplicarlo donde estás (copia escala/glow/brillo/clickbox/acciones)
+/bde rename <nombre> <nuevo>           ← renombrarlo
 /bde remove [nombre|nearest]           ← quitarlo
 ```
+
+**Apariencia** (persiste y se re-aplica al arrancar):
+
+```
+/bde glow <color|#RRGGBB|off> [nombre] ← contorno glow de color (paleta del chat o hex libre)
+/bde brightness <0-15|auto> [nombre]   ← luz propia: 15 = siempre iluminado (carteles/estatuas
+                                         visibles de noche), auto = luz del mundo
+```
+
+**Modelos INTERACTIVOS** (clic derecho ejecuta cosas):
+
+```
+/bde clickbox <ancho> <alto> [nombre]  ← zona invisible clicable en el origen del modelo
+                                         (si el modelo trae hitbox propia, también vale; off = quitar)
+/bde action <nombre> add console <cmd> ← comando como CONSOLA al clicar
+/bde action <nombre> add player <cmd>  ← comando como el JUGADOR que clica
+/bde action <nombre> add anim <once|loop|stop> ← dispara/para la animación del modelo
+/bde action <nombre> list|remove <n>|clear
+```
+
+Placeholders en los comandos: `{player}`, `{model}`, `{x}` `{y}` `{z}` (posición del jugador).
+Cooldown anti-spam de 0.6s por jugador. Ejemplos: un cofre del tesoro que abre un menú
+(`add player menu tesoro`), una estatua que saluda (`add console say Hola {player}!`), una
+puerta/máquina que se anima al tocarla (`add anim once`).
 
 **Animaciones** (si el modelo trae):
 

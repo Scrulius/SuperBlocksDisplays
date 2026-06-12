@@ -42,6 +42,16 @@ public class PersistenceManager {
         config.set(path + ".loopAnim", group.isLoopAnim());
         config.set(path + ".animSpeed", group.getAnimSpeed());
         config.set(path + ".anim", group.getCurrentAnim());
+        config.set(path + ".glow", group.getGlowColor());
+        config.set(path + ".brightness", group.getBrightness() >= 0 ? group.getBrightness() : null);
+        if (group.getClickboxWidth() > 0 && group.getClickboxHeight() > 0) {
+            config.set(path + ".clickbox.width", group.getClickboxWidth());
+            config.set(path + ".clickbox.height", group.getClickboxHeight());
+        } else {
+            config.set(path + ".clickbox", null);
+        }
+        config.set(path + ".actions", group.getActions().isEmpty() ? null
+                : group.getActions().stream().map(ModelAction::serialize).toList());
         save();
     }
 
@@ -106,6 +116,12 @@ public class PersistenceManager {
         boolean loopAnim = config.getBoolean(path + ".loopAnim", true);
         float animSpeed = (float) config.getDouble(path + ".animSpeed", 1.0);
         String animName = config.getString(path + ".anim", null);
+        SavedExtras extras = new SavedExtras(
+                config.getString(path + ".glow", null),
+                config.getInt(path + ".brightness", -1),
+                (float) config.getDouble(path + ".clickbox.width", 0),
+                (float) config.getDouble(path + ".clickbox.height", 0),
+                config.getStringList(path + ".actions"));
 
         Location loc = new Location(world, x, y, z, yaw, 0);
 
@@ -113,7 +129,7 @@ public class PersistenceManager {
         ModelData snapshot = plugin.getModelManager().loadSpawnedData(groupId);
         if (snapshot != null) {
             plugin.getServer().getScheduler().runTask(plugin, () ->
-                    spawnLoaded(groupId, modelId, displayName, loc, yaw, scale, animating, loopAnim, animSpeed, animName, snapshot, false));
+                    spawnLoaded(groupId, modelId, displayName, loc, yaw, scale, animating, loopAnim, animSpeed, animName, extras, snapshot, false));
             return true;
         }
 
@@ -122,7 +138,7 @@ public class PersistenceManager {
         plugin.getModelManager().resolveModelData(modelId).thenAccept(modelData ->
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (modelData != null) {
-                        spawnLoaded(groupId, modelId, displayName, loc, yaw, scale, animating, loopAnim, animSpeed, animName, modelData, true);
+                        spawnLoaded(groupId, modelId, displayName, loc, yaw, scale, animating, loopAnim, animSpeed, animName, extras, modelData, true);
                     } else {
                         plugin.getLogger().warning("Could not reload model '" + displayName + "' (" + modelId
                                 + ") - no local snapshot, and not found in library or API.");
@@ -131,9 +147,13 @@ public class PersistenceManager {
         return true;
     }
 
+    /** Glow/brightness/clickbox/actions saved with a group (v1.7.0); all optional. */
+    private record SavedExtras(String glow, int brightness, float clickboxWidth, float clickboxHeight,
+                               java.util.List<String> actions) {}
+
     private void spawnLoaded(UUID groupId, String modelId, String displayName, Location loc, float yaw, float scale,
                              boolean animating, boolean loopAnim, float animSpeed, String animName,
-                             ModelData modelData, boolean snapshotAfter) {
+                             SavedExtras extras, ModelData modelData, boolean snapshotAfter) {
         // Names must be unique among active models (commands resolve by name); old saves may
         // contain duplicates, so de-dup on load and persist the corrected name.
         String finalName = displayName;
@@ -146,8 +166,20 @@ public class PersistenceManager {
         }
 
         ModelGroup group = new ModelGroup(loc, groupId, modelId, finalName);
-        // Scale must be set BEFORE spawning - it is baked into the summon NBT.
+        // Scale must be set BEFORE spawning - it is baked into the summon NBT. Appearance and
+        // clickbox too: tagPart applies glow/brightness per part, spawn() raises the clickbox.
         group.setScale(scale);
+        group.setGlowColor(extras.glow());
+        group.setBrightness(extras.brightness());
+        group.setClickboxSize(extras.clickboxWidth(), extras.clickboxHeight());
+        for (String raw : extras.actions()) {
+            ModelAction action = ModelAction.parse(raw);
+            if (action != null) {
+                group.getActions().add(action);
+            } else {
+                plugin.getLogger().warning("Ignoring malformed click-action of model '" + finalName + "': " + raw);
+            }
+        }
         group.reconnectOrSpawn(modelData, plugin);
         group.setYaw(yaw);
         group.setLoopAnim(loopAnim);

@@ -38,11 +38,33 @@ el plugin renombrado migra `plugins/SuperBlocksDisplays` → `plugins/SuperFurni
   se setea ANTES de `reconnectOrSpawn` porque va horneada en el NBT). Los muebles siguen a 1.0
   (sobrecarga de `summonModelParts` sin escala). ⚠️ Si un modelo escalado tiene keyframes de
   fallback (no mapeables), esos frames salen SIN escalar (warning en consola al compilar).
+- **Modelos interactivos + personalización admin (v1.7.0)**:
+  - **Click-actions** (`/bde action <nombre> add <console|player|anim> ...`): al clic derecho en
+    una Interaction del modelo (hitbox authored O el clickbox) se ejecutan hasta 10 acciones —
+    comando de consola/jugador (placeholders `{player}/{model}/{x}/{y}/{z}`) o disparar la
+    animación (`anim once|loop|stop`, estado transitorio: NO se persiste, el modelo arranca en su
+    idle). `ModelAction` (record puro, parse/serialize/expand testeados, formato "console: cmd"
+    como los muebles); ejecución en `ModelInteractListener` (main-hand only — el evento dispara
+    por cada mano —, cooldown 600ms por jugador+grupo, resuelve por PDC `group_id` solo en
+    `activeGroups` → los muebles no se ven afectados).
+  - **`/bde clickbox <ancho> <alto>|off`**: Interaction invisible en el origen (spawn NATIVO con
+    `world.spawn`, no summon), trackeada en `partIds` + PDC + animTag → remove/purge/move la
+    tratan como una pieza más; se re-alza en cada `spawn()` (y tras `/bde scale`).
+  - **`/bde glow <color|#RRGGBB|off>`** (paleta chat en `GlowColors` + hex libre, testeado) y
+    **`/bde brightness <0-15|auto>`** (`Display.setBrightness`, 15 = visible de noche). Se aplican
+    por pieza en `tagPart` (catch-up como el yaw) → sobreviven respawn/restart; en vivo via
+    `applyAppearance()`. Solo a Displays (la clickbox sigue invisible).
+  - **QoL**: `/bde clone <nombre> <nuevo>` (duplica en tu posición: escala/yaw/glow/brillo/
+    clickbox/acciones/anim; snapshot propio), `/bde rename`, `/bde tphere` (mismo mundo,
+    `move()` por delta → no rompe animaciones), `/bde near [radio]` (lista clicable → tp).
+  - Persistencia: `spawned.yml` claves `glow/brightness/clickbox.{width,height}/actions`
+    (`SavedExtras` en PersistenceManager; se setean ANTES de `reconnectOrSpawn`).
 - **Tests (Maven `mvn test`, JUnit 5 + Mockito 5)**: `src/test/java` cubre la matemática pura
   (`ScaleMathTest` — escala + orientación del transpose, `KeyframeParserTest` — parsing estricto
   con keyframe real de api_sample2, `ModelGroupTest` — countParts) y `ModelManagerTest` (librería
   + snapshots con plugin mockeado; el inline mock maker de Mockito 5 stubea los métodos FINAL de
   JavaPlugin como getDataFolder/getLogger, y el scheduler se mockea para correr el async inline).
+  v1.7.0 añade `ModelActionTest` y `GlowColorsTest` (36 tests en total).
   Surefire con `-XX:+EnableDynamicAgentLoading` (silencia el warning del agente en JDK 21).
 - Persistencia admin (`/bde`): snapshot local completo en `data/<group-id>.json` — el re-spawn
   NUNCA depende de la API. Los muebles de jugadores usarán otra arquitectura: entities

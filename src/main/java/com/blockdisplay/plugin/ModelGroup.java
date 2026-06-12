@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
 public class ModelGroup {
     private final UUID groupId;
     private final String modelId;
-    private final String displayName;
+    private String displayName; // renameable via /bde rename
     // Parts are tracked by UUID, not Entity reference: Entity objects go stale when their chunk
     // unloads/reloads, while a UUID always resolves to the live instance via Bukkit.getEntity().
     private final List<UUID> partIds = new ArrayList<>();
@@ -33,6 +33,16 @@ public class ModelGroup {
     // Uniform scale baked into the part matrices at summon time (and premultiplied into compiled
     // animation frames). Fixed at spawn; /bde scale re-summons the parts with the new factor.
     private float scale = 1.0f;
+    // Appearance: glow outline (raw color string as typed: name or #hex; null = off) and
+    // block-light brightness override (-1 = world lighting). Applied per part as it registers.
+    private String glowColor = null;
+    private int brightness = -1;
+    // Interactivity: an invisible Interaction box players can right-click (0 = none) and the
+    // actions that run on click (see ModelAction). The clickbox entity is tracked like any part.
+    private float clickboxWidth = 0;
+    private float clickboxHeight = 0;
+    private UUID clickboxId = null;
+    private final List<ModelAction> actions = new ArrayList<>();
     private ModelData modelData;
     private boolean animating = false;
     private boolean ready = false;
@@ -89,6 +99,51 @@ public class ModelGroup {
                 e.teleport(loc);
             }
         }
+        applyAppearanceTo(e);
+    }
+
+    /** Glow + brightness for one part (Displays only; the clickbox Interaction stays invisible). */
+    private void applyAppearanceTo(Entity e) {
+        if (!(e instanceof org.bukkit.entity.Display d)) return;
+        org.bukkit.Color color = (glowColor != null) ? GlowColors.resolve(glowColor) : null;
+        d.setGlowColorOverride(color);
+        d.setGlowing(color != null);
+        d.setBrightness(brightness >= 0
+                ? new org.bukkit.entity.Display.Brightness(brightness, brightness) : null);
+    }
+
+    /** Re-apply glow/brightness to every live part (after /bde glow|brightness on a spawned model). */
+    public void applyAppearance() {
+        forEachPart(this::applyAppearanceTo);
+    }
+
+    /**
+     * (Re)spawn the invisible click target. Native spawn (no summon command): tagged with the
+     * group PDC + anim tag and tracked in partIds, so remove()/purge sweeps treat it like any part.
+     */
+    public void spawnClickbox(BlockDisplayPlugin plugin) {
+        removeClickbox();
+        if (clickboxWidth <= 0 || clickboxHeight <= 0) return;
+        World world = origin.getWorld();
+        if (world == null) return;
+        NamespacedKey groupKey = new NamespacedKey(plugin, "group_id");
+        org.bukkit.entity.Interaction box = world.spawn(origin, org.bukkit.entity.Interaction.class, i -> {
+            i.setInteractionWidth(clickboxWidth);
+            i.setInteractionHeight(clickboxHeight);
+            i.setResponsive(true); // client-side arm swing feedback on click
+            i.getPersistentDataContainer().set(groupKey, PersistentDataType.STRING, groupId.toString());
+            i.addScoreboardTag(getAnimTag());
+        });
+        clickboxId = box.getUniqueId();
+        partIds.add(clickboxId);
+    }
+
+    public void removeClickbox() {
+        if (clickboxId == null) return;
+        Entity old = Bukkit.getEntity(clickboxId);
+        if (old != null) old.remove();
+        partIds.remove(clickboxId);
+        clickboxId = null;
     }
 
     /** Run an action on every part that currently resolves to a live entity. */
@@ -135,6 +190,7 @@ public class ModelGroup {
 
         NamespacedKey groupKey = new NamespacedKey(plugin, "group_id");
         List<UUID> intended = summonModelParts(modelData, origin, scale, plugin, e -> tagPart(e, groupKey));
+        spawnClickbox(plugin);
 
         // Mark as ready after a short delay so all entities are fully registered
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> this.ready = true, 3L);
@@ -288,6 +344,7 @@ public class ModelGroup {
         forEachPart(Entity::remove);
         partIds.clear();
         partsByTag.clear();
+        clickboxId = null;
 
         // Sweep for any untracked entities with our group_id tag
         World world = origin.getWorld();
@@ -335,6 +392,18 @@ public class ModelGroup {
     public float getYawOffset() { return yawOffset; }
     public float getScale() { return scale; }
     public void setScale(float scale) { this.scale = scale; }
+    public void setDisplayName(String displayName) { this.displayName = displayName; }
+    public String getGlowColor() { return glowColor; }
+    public void setGlowColor(String glowColor) { this.glowColor = glowColor; }
+    public int getBrightness() { return brightness; }
+    public void setBrightness(int brightness) { this.brightness = brightness; }
+    public float getClickboxWidth() { return clickboxWidth; }
+    public float getClickboxHeight() { return clickboxHeight; }
+    public void setClickboxSize(float width, float height) {
+        this.clickboxWidth = width;
+        this.clickboxHeight = height;
+    }
+    public List<ModelAction> getActions() { return actions; }
     public float getAnimSpeed() { return animSpeed; }
     public void setAnimSpeed(float animSpeed) { this.animSpeed = animSpeed; }
     public boolean isLoopAnim() { return loopAnim; }
